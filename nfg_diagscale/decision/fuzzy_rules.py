@@ -27,11 +27,19 @@ SCALING_MODES = {"vertical": 0, "diagonal": 1, "horizontal": 2}
 MODE_NAMES = {0: "vertical", 1: "diagonal", 2: "horizontal"}
 
 
-def gaussian_mf(x, center, sigma):
+def gaussian_mf(x, center, sigma, term_name=""):
     """
-    [Jang93] Gaussian membership function for ANFIS:
-      mu_i(x) = exp(-(x - c_i)^2 / (2 * sigma_i^2))
+    [Jang93] Gaussian membership function for ANFIS, modified with
+    open-ended shoulders (Z-shaped and S-shaped at domain edges)
+    so rule firing doesn't drop to 0 at extreme values.
     """
+    # Open-ended left shoulders (Z-shape)
+    if term_name in ["low", "tight", "exhausted", "safe"] and x < center:
+        return 1.0
+    # Open-ended right shoulders (S-shape)
+    if term_name in ["critical", "ample", "abundant", "risky"] and x > center:
+        return 1.0
+        
     return np.exp(-((x - center) ** 2) / (2 * sigma ** 2 + 1e-8))
 
 
@@ -80,7 +88,7 @@ class FuzzyRule:
                 continue
             terms = LINGUISTIC_TERMS[var_name]
             center, sigma = terms[term_name]
-            mu = gaussian_mf(inputs[var_name], center, sigma)
+            mu = gaussian_mf(inputs[var_name], center, sigma, term_name)
             strength *= mu
         return strength
 

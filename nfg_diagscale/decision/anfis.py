@@ -82,7 +82,7 @@ class ANFISEngine:
                 continue
             memberships[var_name] = {}
             for term_name, params in self.mf_params[var_name].items():
-                mu = gaussian_mf(value, params["center"], params["sigma"])
+                mu = gaussian_mf(value, params["center"], params["sigma"], term_name)
                 memberships[var_name][term_name] = mu
         return memberships
 
@@ -96,7 +96,7 @@ class ANFISEngine:
             for var_name, term_name in rule.antecedents.items():
                 if var_name in inputs:
                     params = self.mf_params[var_name][term_name]
-                    mu = gaussian_mf(inputs[var_name], params["center"], params["sigma"])
+                    mu = gaussian_mf(inputs[var_name], params["center"], params["sigma"], term_name)
                     w *= mu
             strengths.append(w)
         return np.array(strengths)
@@ -258,7 +258,7 @@ class ANFISEngine:
                 for term_name, params in self.mf_params[var_name].items():
                     c = params["center"]
                     s = params["sigma"]
-                    mu = gaussian_mf(value, c, s)
+                    mu = gaussian_mf(value, c, s, term_name)
 
                     if mu < 1e-8:
                         continue

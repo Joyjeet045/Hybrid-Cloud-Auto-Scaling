@@ -60,9 +60,10 @@ class DiagonalScaleBaseline:
         b = self.bw
         s = self.storage
         current_V = (c, r, b, s)
+        actual_rps = state.get("current_rps", 0)
 
         # [P3 sect III-H] Current objective value
-        F_curr = self.scaling_plane.objective(H, c, r, b, s, self.slo)
+        F_curr = self.scaling_plane.objective(H, c, r, b, s, self.slo, actual_rps)
 
         # [P3 sect V-B] Generate neighborhood
         neighbors = self._generate_neighborhood(H, c)
@@ -72,14 +73,14 @@ class DiagonalScaleBaseline:
 
         for (H_n, c_n) in neighbors:
             # [P3 Alg 1 line 5] Estimate surfaces
-            lat = self.scaling_plane.total_latency(H_n, c_n, r, b, s)
+            lat = self.scaling_plane.total_latency(H_n, c_n, r, b, s, actual_rps)
 
             # [P3 Alg 1 lines 6-7] Feasibility check
             if lat > self.slo:
                 continue
 
             # [P3 Alg 1 line 9] Objective
-            F_n = self.scaling_plane.objective(H_n, c_n, r, b, s, self.slo)
+            F_n = self.scaling_plane.objective(H_n, c_n, r, b, s, self.slo, actual_rps)
 
             # [P3 Alg 1 line 10] Rebalance penalty
             new_V = (c_n, r, b, s)

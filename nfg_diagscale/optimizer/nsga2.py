@@ -85,7 +85,7 @@ class NSGA2Optimizer:
 
         # [P3 sect III-D] f2: latency-based SLO risk
         lat = self.scaling_plane.total_latency(
-            ind.H, ind.c, self.ram, self.bw, self.storage
+            ind.H, ind.c, self.ram, self.bw, self.storage, predicted_rps
         )
         f2 = max(0, lat - self.slo) / self.slo
 

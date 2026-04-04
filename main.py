@@ -147,6 +147,10 @@ def main():
         test_df, predictions, output_dir
     )
 
+    import json
+    with open(os.path.join(output_dir, "metrics.json"), "w") as f:
+        json.dump(all_metrics, f, indent=2)
+
     print("\n[DONE] All results saved.")
     return all_metrics
 

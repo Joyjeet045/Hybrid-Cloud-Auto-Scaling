@@ -111,7 +111,11 @@ class NFGDiagScaleOrchestrator:
                 rho = 1.0
 
             # ANFIS input variables
-            psi = lambda_hat / max(lambda_kf, 1.0)
+            # psi should represent load intensity (utilization), so we compare predicted demand to current capacity
+            # If we only compared to past demand, we'd never scale down once traffic stabilizes at a low level!
+            current_capacity = env.replicas * env.cores * self.config["cloud"]["pod_max_rps"]
+            psi = lambda_hat / max(current_capacity, 1.0)
+            
             phi = 1.0 - env.cores / self.config["cloud"]["max_cores"]
 
             # ── PLAN ──

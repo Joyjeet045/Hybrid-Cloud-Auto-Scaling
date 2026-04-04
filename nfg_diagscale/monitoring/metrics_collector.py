@@ -68,10 +68,11 @@ class MetricsCollector:
         sigma = self.w1 * cpu_frac + self.w2 * lat_frac + self.w3 * q_frac
         return sigma
 
-    def detect_violation(self, sigma_stress, upper=0.8, lower=0.3):
+    def detect_violation(self, sigma_stress, upper=0.65, lower=0.35):
         """
         [P4 sect 2.2] "When a metric exceeds a predefined threshold,
-        it is flagged as a symptom. A resource violation as UP indicates
+        it is flagged as a symptom."
+        Upper set to 0.65 to allow proactive scaling BEFORE latency hits 1.0 (SLO limit).
         the need to add more resources, while DOWN suggests eliminating."
         """
         if sigma_stress > upper:
