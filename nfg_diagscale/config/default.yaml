@@ -1,0 +1,116 @@
+# [P5] Prophet-LSTM: Table 2 model configuration (Front. Comput. Sci. 2025)
+# [P1] Themis: latency model parameters (arXiv:2407.14843)
+# [P2] HAS-GPU: Kalman filter parameters (arXiv:2505.01968, sect 3.3)
+# [P3] Diagonal Scaling: surface model parameters (arXiv:2511.21612, sect III)
+# [P4] Autonomic Computing: MAPE-K tuning (UCC'25, Table 1)
+
+dataset:
+  name: "nasa"
+  train_ratio: 0.7
+  aggregation_minutes: 1
+
+# [P5 Table 2] Prophet model configuration
+prophet:
+  growth: "linear"
+  changepoint_prior_scale: 5.1
+  yearly_seasonality: false
+  weekly_seasonality: 20
+  daily_seasonality: 50
+  seasonality_prior_scale: 30
+
+# [P5 Table 2] LSTM model configuration  
+lstm:
+  layers: 2
+  units: 50
+  dense_output: 1
+  loss: "mse"
+  optimizer: "adam"
+  learning_rate: 0.001
+  epochs: 50
+  batch_size: 16
+  early_stopping_patience: 5
+  lookback_window: 60
+
+# [P2 sect 3.3] Kalman filter for RPS estimation
+kalman:
+  A: 1.0
+  H: 1.0
+  Q: 0.01
+  D: 0.1
+  initial_P: 1.0
+
+# [P1 Eq. 1] Themis processing latency: l(b,c) = gamma*b/c + epsilon/c + delta*b + eta
+# Parameters fitted to typical microservice inference workloads
+themis:
+  gamma: 0.5
+  epsilon: 2.0
+  delta: 0.01
+  eta: 5.0
+  batch_size: 1
+  slo_ms: 100.0
+
+# [P3 sect III-B,C,G] Scaling Plane surface parameters
+scaling_plane:
+  alpha: 50.0
+  beta: 10.0
+  gamma_sp: 5.0
+  delta_sp: 2.0
+  eta_coord: 2.0
+  mu_coord: 0.5
+  theta: 0.6
+  cost_per_core: 0.05
+  cost_per_gb_ram: 0.01
+  cost_per_replica: 0.10
+
+# [P3 sect V-D] Rebalance penalty weights
+rebalance:
+  lambda1: 1.0
+  lambda2: 0.5
+  lambda3: 0.3
+
+# ANFIS decision engine (Jang 1993 architecture, rules from P1+P3)
+anfis:
+  num_mfs_per_input: 3
+  learning_rate: 0.01
+  alpha_cost_weight: 0.1
+
+# NSGA-II optimizer (Deb et al. 2002, applied to P3 Scaling Plane)
+nsga2:
+  population_size: 100
+  generations: 50
+  crossover_prob: 0.9
+  mutation_prob: 0.1
+  horizon_steps: 15
+  run_interval_steps: 30
+
+# [P4 Table 1] MAPE-K loop parameters
+mape_k:
+  cycle_seconds: 30
+  update_frequency: 30
+  history_interval: 120
+  heat_threshold: 3
+
+# Cloud environment bounds
+cloud:
+  min_replicas: 1
+  max_replicas: 20
+  min_cores: 1
+  max_cores: 16
+  ram_gb: 8
+  bandwidth_gbps: 1
+  storage_iops: 1000
+  pod_max_rps: 100
+  horizontal_delay_steps: 2
+  vertical_delay_steps: 0
+
+# Stress signal weights (author synthesis of P4 multi-level monitoring)
+stress:
+  w1_cpu: 0.4
+  w2_latency: 0.4
+  w3_queue: 0.2
+  q_max: 500
+
+# Prediction horizons in minutes (P5 multi-step evaluation)
+prediction:
+  horizons: [1, 5, 15]
+  primary_horizon: 5
