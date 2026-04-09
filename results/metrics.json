@@ -1,52 +1,57 @@
 [
   {
     "name": "NFG-DiagScale",
-    "svr_pct": 30.0,
-    "total_cost": 59.98000000000001,
-    "avg_latency_ms": 14257.8577447227,
-    "p99_latency_ms": 361284.5361828332,
-    "scaling_actions": 15,
-    "rebalance_overhead": 28,
-    "steps": 50
+    "svr_pct": 12.666666666666668,
+    "total_cost": 439.68,
+    "avg_latency_ms": 2503.4830344428615,
+    "p99_latency_ms": 3441.2273485293877,
+    "scaling_actions": 72,
+    "rebalance_overhead": 130,
+    "reaction_lag_steps": 1.1515151515151516,
+    "steps": 300
   },
   {
     "name": "HPA",
-    "svr_pct": 32.0,
-    "total_cost": 141.91,
-    "avg_latency_ms": 21811.20296799786,
-    "p99_latency_ms": 485757.0797358048,
-    "scaling_actions": 16,
-    "rebalance_overhead": 31,
-    "steps": 50
+    "svr_pct": 45.0,
+    "total_cost": 1542.8,
+    "avg_latency_ms": 3841.334910057722,
+    "p99_latency_ms": 29863.4105491188,
+    "scaling_actions": 39,
+    "rebalance_overhead": 71,
+    "reaction_lag_steps": 3.4615384615384617,
+    "steps": 300
   },
   {
     "name": "VPA",
-    "svr_pct": 60.0,
-    "total_cost": 28.05,
-    "avg_latency_ms": 16267.671899163739,
-    "p99_latency_ms": 369835.9903338203,
-    "scaling_actions": 10,
-    "rebalance_overhead": 14,
-    "steps": 50
+    "svr_pct": 27.666666666666668,
+    "total_cost": 287.95,
+    "avg_latency_ms": 2868.1004900574653,
+    "p99_latency_ms": 17031.04303870632,
+    "scaling_actions": 11,
+    "rebalance_overhead": 15,
+    "reaction_lag_steps": 1.9761904761904763,
+    "steps": 300
   },
   {
     "name": "Themis",
-    "svr_pct": 100.0,
-    "total_cost": 20.85,
-    "avg_latency_ms": 14405.977166671848,
-    "p99_latency_ms": 357431.0820282723,
-    "scaling_actions": 21,
-    "rebalance_overhead": 24,
-    "steps": 50
+    "svr_pct": 17.666666666666668,
+    "total_cost": 307.6,
+    "avg_latency_ms": 2487.8738045659197,
+    "p99_latency_ms": 2805.5478371276163,
+    "scaling_actions": 27,
+    "rebalance_overhead": 41,
+    "reaction_lag_steps": 1.4722222222222223,
+    "steps": 300
   },
   {
     "name": "DiagonalScale",
-    "svr_pct": 14.000000000000002,
-    "total_cost": 29.180000000000003,
-    "avg_latency_ms": 14226.76252201179,
-    "p99_latency_ms": 361284.5361828332,
-    "scaling_actions": 8,
-    "rebalance_overhead": 11,
-    "steps": 50
+    "svr_pct": 21.0,
+    "total_cost": 205.38,
+    "avg_latency_ms": 2439.3993512783936,
+    "p99_latency_ms": 206.52891033422517,
+    "scaling_actions": 10,
+    "rebalance_overhead": 13,
+    "reaction_lag_steps": 1.5365853658536586,
+    "steps": 300
   }
 ]

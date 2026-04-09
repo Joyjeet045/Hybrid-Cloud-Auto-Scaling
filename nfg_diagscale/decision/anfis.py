@@ -150,10 +150,12 @@ class ANFISEngine:
                 dn_raw = max(1.0, float(np.ceil(psi / 2.0)))
 
             # Scale-down rules: use full surplus to aggressively save costs.
+            # [Audit Fix] Maximize cost savings when Psi is low and headroom is ample
             if rule.delta_n < 0:
+                # [P5 Eq 7] Release all pods that are not required for current predicted RPS
                 surplus = n_current - n_target_down
                 if surplus > 0:
-                    dn_raw = float(-surplus)
+                    dn_raw = float(-surplus) # Scale down to the bare minimum required
                 else:
                     dn_raw = 0.0
 
@@ -193,6 +195,11 @@ class ANFISEngine:
             # prevent over-provisioning bias from Pareto exploration
             dn_val = 0.9 * dn_val + 0.1 * (h_star - n_current)
             dc_val = 0.9 * dc_val + 0.1 * (c_star - cores_current)
+
+        # [Audit Fix] Apply Deadzone to prevent micro-oscillations (Stability vs Cost)
+        # Suppress changes smaller than 0.15 to avoid jitter.
+        if abs(dn_val) < 0.15: dn_val = 0.0
+        if abs(dc_val) < 0.15: dc_val = 0.0
 
         # Discretize and clip deltas
         delta_c = int(np.clip(round(dc_val), -2, 4))
@@ -247,7 +254,8 @@ class ANFISEngine:
             lat = record["latency"]
             cost = record["cost"]
 
-            # Hinge loss: only penalize SLO violations
+            # [Grounded in Proposal Sect 5.5, Eq 281] L = (L-SLO)^2 + alpha_cost * Cost
+            # We use raw differences as specified; stability is handled by gradient clipping below.
             slo_loss = max(0.0, lat - self.slo) ** 2
             total_loss = slo_loss + self.alpha_cost * cost
 
@@ -259,9 +267,9 @@ class ANFISEngine:
             for var_name, value in inputs.items():
                 if var_name not in self.mf_params:
                     continue
-                for term_name, params in self.mf_params[var_name].items():
-                    c = params["center"]
-                    s = params["sigma"]
+                for term_name, mf_p in self.mf_params[var_name].items():
+                    c = mf_p["center"]
+                    s = mf_p["sigma"]
                     mu = gaussian_mf(value, c, s, term_name)
 
                     if mu < 1e-8:
@@ -272,9 +280,12 @@ class ANFISEngine:
                     # d(loss)/d(sigma)
                     d_mu_ds = mu * ((value - c) ** 2) / (s ** 3 + 1e-8)
 
-                    grad_scale = total_loss * 0.01
+                    # [Audit fix] Gradient clipping for stability
+                    grad_scale = total_loss * 0.001 # Reduced scale
+                    gc = np.clip(grad_scale * d_mu_dc, -1.0, 1.0)
+                    gs = np.clip(grad_scale * d_mu_ds, -1.0, 1.0)
 
-                    params["center"] -= self.lr * grad_scale * d_mu_dc
-                    params["sigma"] = max(0.01, params["sigma"] - self.lr * grad_scale * d_mu_ds)
+                    mf_p["center"] -= self.lr * gc
+                    mf_p["sigma"] = np.clip(mf_p["sigma"] - self.lr * gs, 0.05, 5.0)
 
         self._training_buffer = self._training_buffer[-100:]

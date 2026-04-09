@@ -96,6 +96,31 @@ def rebalance_overhead(action_log):
     return sum(abs(a.get("delta_n", 0)) + abs(a.get("delta_c", 0)) for a in action_log)
 
 
+def reaction_lag(history, slo):
+    """
+    [P4 Eq. 1] RT = CRD - DFTV
+    Tracking the steps between SLO violation start and scaled resolution.
+    Approximate: Average duration of SLO violation streaks.
+    """
+    if not history:
+        return 0.0
+    
+    violation_streaks = []
+    current_streak = 0
+    
+    for s in history:
+        if s["app_latency"] > slo:
+            current_streak += 1
+        else:
+            if current_streak > 0:
+                violation_streaks.append(current_streak)
+            current_streak = 0
+    if current_streak > 0:
+        violation_streaks.append(current_streak)
+        
+    return np.mean(violation_streaks) if violation_streaks else 0.0
+
+
 def compute_all_metrics(history, action_log, slo, name=""):
     """Compute all KPIs for one autoscaler run."""
     results = {
@@ -106,6 +131,7 @@ def compute_all_metrics(history, action_log, slo, name=""):
         "p99_latency_ms": p99_latency(history),
         "scaling_actions": scaling_action_count(action_log),
         "rebalance_overhead": rebalance_overhead(action_log),
+        "reaction_lag_steps": reaction_lag(history, slo),
         "steps": len(history),
     }
     return results

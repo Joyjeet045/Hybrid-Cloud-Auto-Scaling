@@ -38,10 +38,11 @@ class ThemisBaseline:
         
         for cores in range(self.min_cores, self.max_cores + 1):
             lat = self.themis.total_latency(batch, cores, actual_rps, current_h)
-            if lat <= self.slo:
+            # [Audit Fix] Robust Themis: use safety margin
+            if lat <= (self.slo * 0.85):
                 cost = self.scaling_plane.total_cost(current_h, cores, self.ram)
-                if cost < min_v_cost:
-                    min_v_cost = cost
+                # During violations, prioritize safety (more cores) over min cost
+                if best_v_cores is None or cores > best_v_cores:
                     best_v_cores = cores
         
         if best_v_cores is not None:
@@ -59,7 +60,7 @@ class ThemisBaseline:
         for h in range(self.min_replicas, self.max_replicas + 1):
             for c in range(self.min_cores, self.max_cores + 1):
                 lat = self.themis.total_latency(batch, c, actual_rps, h)
-                if lat <= self.slo:
+                if lat <= (self.slo * 0.85):
                     cost = self.scaling_plane.total_cost(h, c, self.ram)
                     if cost < min_cost:
                         min_cost = cost

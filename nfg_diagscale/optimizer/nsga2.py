@@ -104,8 +104,9 @@ class NSGA2Optimizer:
             f2_sum += max(0, lat - self.slo) / self.slo
 
             # f3: Rebalance penalty for transition to this step [P3 sect V-D]
+            # [Audit Fix] Prefer vertical (rebalance=0) over horizontal moves
             curr_V = (c_step, 8.0, 1.0, 1000.0)
-            f3_sum += self.rebalance.compute(prev_H, prev_V, H_step, curr_V)
+            f3_sum += self.rebalance.compute(prev_H, prev_V, H_step, curr_V) * 1.2
 
             prev_H = H_step
             prev_V = curr_V

@@ -122,15 +122,16 @@ def main():
         all_metrics.append(m)
 
     # Print comparison table
-    print("\n" + "=" * 80)
+    print("\n" + "=" * 90)
     print(f"{'Autoscaler':<20} {'SVR%':>8} {'Cost($)':>10} {'AvgLat':>10} "
-          f"{'P99Lat':>10} {'Actions':>8} {'Rebal':>8}")
-    print("-" * 80)
+          f"{'P99Lat':>10} {'Actions':>8} {'Rebal':>8} {'Lag':>8}")
+    print("-" * 90)
     for m in all_metrics:
         print(f"{m['name']:<20} {m['svr_pct']:>8.2f} {m['total_cost']:>10.2f} "
               f"{m['avg_latency_ms']:>10.2f} {m['p99_latency_ms']:>10.2f} "
-              f"{m['scaling_actions']:>8d} {m['rebalance_overhead']:>8d}")
-    print("=" * 80)
+              f"{m['scaling_actions']:>8d} {m['rebalance_overhead']:>8d} "
+              f"{m['reaction_lag_steps']:>8.2f}")
+    print("=" * 90)
 
     # Cost efficiency ratios
     nfg_cost = all_metrics[0]["total_cost"]
