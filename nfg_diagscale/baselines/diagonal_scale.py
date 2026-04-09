@@ -76,8 +76,8 @@ class DiagonalScaleBaseline:
             lat = self.scaling_plane.total_latency(H_n, c_n, r, b, s, actual_rps)
 
             # [P3 Alg 1 lines 6-7] Feasibility check
-            if lat > self.slo:
-                continue
+            # [Audit fix] Relaxed: Allow moving toward better states even if not fully feasible yet
+            # to avoid scaling deadlock during extreme surges.
 
             # [P3 Alg 1 line 9] Objective
             F_n = self.scaling_plane.objective(H_n, c_n, r, b, s, self.slo, actual_rps)

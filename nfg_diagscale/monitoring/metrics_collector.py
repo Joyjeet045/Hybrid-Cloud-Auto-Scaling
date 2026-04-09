@@ -62,18 +62,18 @@ class MetricsCollector:
         Sigma_stress = w1 * CPU/CPU_max + w2 * L_app/SLO + w3 * Q/Q_max
         """
         cpu_frac = min(metrics["cpu_utilization"], 1.0)
-        lat_frac = min(metrics["app_latency"] / self.slo, 2.0)
-        q_frac = min(metrics["queue_depth"] / self.q_max, 2.0)
+        lat_frac = min(metrics["app_latency"] / self.slo, 1.5)
+        q_frac = min(metrics["queue_depth"] / self.q_max, 1.5)
 
-        sigma = self.w1 * cpu_frac + self.w2 * lat_frac + self.w3 * q_frac
+        # [P4 Algorithm 1] Use maximum stress across any dimension to trigger symptoms.
+        # This prevents the signal from being dampened by other healthy dimensions.
+        sigma = max(cpu_frac, lat_frac, q_frac)
         return sigma
 
-    def detect_violation(self, sigma_stress, upper=0.65, lower=0.35):
+    def detect_violation(self, sigma_stress, upper=0.5, lower=0.4):
         """
-        [P4 sect 2.2] "When a metric exceeds a predefined threshold,
-        it is flagged as a symptom."
-        Upper set to 0.65 to allow proactive scaling BEFORE latency hits 1.0 (SLO limit).
-        the need to add more resources, while DOWN suggests eliminating."
+        [P4 sect 2.2] Reaction thresholds.
+        Lowered to 0.5 to ensure proactive handling when any metric hits half-capacity.
         """
         if sigma_stress > upper:
             return "UP"

@@ -30,6 +30,7 @@ from nfg_diagscale.orchestrator import NFGDiagScaleOrchestrator, BaselineRunner
 from nfg_diagscale.baselines.hpa import HPABaseline
 from nfg_diagscale.baselines.vpa import VPABaseline
 from nfg_diagscale.baselines.diagonal_scale import DiagonalScaleBaseline
+from nfg_diagscale.baselines.themis import ThemisBaseline
 from nfg_diagscale.evaluation.metrics import (
     compute_all_metrics, forecast_mape, forecast_rmse, forecast_mae, forecast_r2
 )
@@ -96,14 +97,12 @@ def main():
     # ── Step 4: Run baselines ──
     print("\n[Step 4] Running baselines...")
     all_results = {"NFG-DiagScale": {"history": nfg_history, "actions": nfg_actions}}
-
     baselines = [
         HPABaseline(config),
         VPABaseline(config),
+        ThemisBaseline(config),
+        DiagonalScaleBaseline(config),
     ]
-
-    # DiagonalScale baseline from P3
-    baselines.append(DiagonalScaleBaseline(config))
 
     for baseline in baselines:
         print(f"  Running {baseline.name}...")

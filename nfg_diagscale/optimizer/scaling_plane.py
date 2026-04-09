@@ -56,6 +56,9 @@ class ScalingPlane:
         self.cost_per_gb_ram = sp["cost_per_gb_ram"]
         self.cost_per_replica = sp["cost_per_replica"]
 
+        # Use pod_max_rps from cloud config for consistency [P1, P5]
+        self.pod_max_rps = config["cloud"]["pod_max_rps"]
+
     def node_latency(self, c, r, b, s):
         """
         [P3 sect III-B] L_node(V) = alpha/c + beta/r + gamma/b + delta/s
@@ -81,8 +84,7 @@ class ScalingPlane:
         base_lat = self.node_latency(c, r, b, s) + self.coordination_latency(H)
         
         # Effective capacity
-        pod_max_rps = 100 # from config default
-        capacity = H * c * pod_max_rps
+        capacity = H * c * self.pod_max_rps
         
         if capacity > 0 and predicted_rps > 0:
             utilization = predicted_rps / capacity

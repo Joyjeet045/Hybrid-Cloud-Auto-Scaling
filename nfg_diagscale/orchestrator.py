@@ -54,6 +54,11 @@ class NFGDiagScaleOrchestrator:
         self.ga_checkpoint = None
         self.name = "NFG-DiagScale"
 
+        # [P4 Alg 4] Cooldown: prevent action stacking while pending actions mature.
+        # Minimum steps between consecutive scaling decisions.
+        self._cooldown_remaining = 0
+        self._cooldown_steps = config.get("mape_k", {}).get("cooldown_steps", 5)
+
     def run_evaluation(self, test_df):
         """
         Run the full MAPE-K loop on a test trace.
@@ -83,10 +88,12 @@ class NFGDiagScaleOrchestrator:
 
             # [P4 Alg 3] Heat accumulator check
             self.heat_acc.update(violation)
-            if not self.heat_acc.should_trigger():
+
+            # [P4 Alg 4] Enforce cooldown to prevent action-on-action thrashing
+            if self._cooldown_remaining > 0:
+                self._cooldown_remaining -= 1
                 action_log.append({"step": step, "mode": "none", "delta_c": 0, "delta_n": 0})
                 continue
-            self.heat_acc.reset()
 
             # [P2 sect 3.3] Kalman filter + [P5 sect 3.1] Prophet-LSTM prediction
             row_df = None
@@ -95,6 +102,16 @@ class NFGDiagScaleOrchestrator:
             pred = self.predictor.predict_next(actual_rps, row_df)
             lambda_hat = pred["lambda_hat"]
             lambda_kf = pred["lambda_kf"]
+            
+            current_capacity = env.replicas * env.cores * self.config["cloud"]["pod_max_rps"]
+            predicted_psi = lambda_hat / max(current_capacity, 1.0)
+            
+            proactive_trigger = (predicted_psi > 0.8) or (predicted_psi < 0.4)
+
+            if not self.heat_acc.should_trigger() and not proactive_trigger:
+                action_log.append({"step": step, "mode": "none", "delta_c": 0, "delta_n": 0})
+                continue
+            self.heat_acc.reset()
 
             # [P1 Eq. 1, Eq. 5] Themis SLO risk from predicted workload
             rho = self.themis.slo_risk(
@@ -111,11 +128,11 @@ class NFGDiagScaleOrchestrator:
                 rho = 1.0
 
             # ANFIS input variables
-            # psi should represent load intensity (utilization), so we compare predicted demand to current capacity
-            # If we only compared to past demand, we'd never scale down once traffic stabilizes at a low level!
+            # psi = predicted utilization ratio (demand / current capacity)
+            # Clamped to [0.0, 3.0]: values above 3.0 are all treated as critical.
             current_capacity = env.replicas * env.cores * self.config["cloud"]["pod_max_rps"]
-            psi = lambda_hat / max(current_capacity, 1.0)
-            
+            psi = min(lambda_hat / max(current_capacity, 1.0), 3.0)
+
             phi = 1.0 - env.cores / self.config["cloud"]["max_cores"]
 
             # ── PLAN ──
@@ -139,8 +156,15 @@ class NFGDiagScaleOrchestrator:
             delta_c = decision["delta_c"]
             delta_n = decision["delta_n"]
 
-            if mode != "none" and (delta_c != 0 or delta_n != 0):
+            # Only record and execute if a real change is produced
+            if delta_c == 0 and delta_n == 0:
+                # ANFIS voted stable — log as no-op, don't count as action
+                mode = "none"
+
+            if mode != "none":
                 env.execute_scaling(mode, delta_c, delta_n)
+                # Activate cooldown to let the scaling action mature
+                self._cooldown_remaining = self._cooldown_steps
 
             action_record = {
                 "step": step,

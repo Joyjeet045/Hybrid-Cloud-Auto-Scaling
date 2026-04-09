@@ -121,9 +121,13 @@ class ANFISEngine:
         - Vertical delta from consequent parameters (learned)
         """
         # [P5 Eq. 7] pods_{t+1} = workload_{t+1} / workload_{pod}
-        # Pod throughput scales with cores (vertical scaling increases capacity)
+        # For SCALE-UP: use effective_pod_rps (cores * base) to find the minimum feasible replicas
+        # given current core count. This correctly reflects that vertical scaling reduces H_needed.
         effective_pod_rps = self.pod_max_rps * cores_current
-        n_target = max(1, int(np.ceil(predicted_rps / effective_pod_rps)))
+        n_target_up = max(1, int(np.ceil(predicted_rps / effective_pod_rps)))
+
+        # For SCALE-DOWN: use effective_pod_rps to correctly release pods when cores are high.
+        n_target_down = max(1, int(np.ceil(predicted_rps / effective_pod_rps)))
 
         consequent_outputs = []
         for rule in self.rules:
@@ -140,14 +144,14 @@ class ANFISEngine:
 
             # Adapt horizontal delta based on P5 Eq. 7 pod count gap
             if rule.mode == SCALING_MODES["horizontal"]:
-                dn_raw = float(n_target - n_current)
+                dn_raw = float(n_target_up - n_current)
             elif rule.mode == SCALING_MODES["diagonal"]:
                 # [P3 Lemma 1] Diagonal: split between V and H
                 dn_raw = max(1.0, float(np.ceil(psi / 2.0)))
 
-            # Scale-down rules: delta_n proportional to overcapacity
+            # Scale-down rules: use full surplus to aggressively save costs.
             if rule.delta_n < 0:
-                surplus = n_current - n_target
+                surplus = n_current - n_target_down
                 if surplus > 0:
                     dn_raw = float(-surplus)
                 else:
@@ -182,10 +186,6 @@ class ANFISEngine:
         dc_val = sum(w_bar[i] * consequents[i]["delta_c"] for i in range(len(self.rules)))
         dn_val = sum(w_bar[i] * consequents[i]["delta_n"] for i in range(len(self.rules)))
 
-        # Discretize mode
-        mode_idx = int(np.clip(round(mode_val), 0, 2))
-        mode = MODE_NAMES[mode_idx]
-
         # Constrain toward NSGA-II Pareto checkpoint if available
         if ga_checkpoint is not None:
             h_star, c_star = ga_checkpoint
@@ -198,17 +198,21 @@ class ANFISEngine:
         delta_c = int(np.clip(round(dc_val), -2, 4))
         delta_n = int(np.clip(round(dn_val), -3, 10))
 
-        # Enforce mode consistency
-        if mode == "vertical":
-            delta_n = 0
-        elif mode == "horizontal":
-            delta_c = 0
-
-        # Enforce bounds
+        # Enforce bounds FIRST before setting mode
         new_cores = np.clip(cores_current + delta_c, self.min_cores, self.max_cores)
         new_replicas = np.clip(n_current + delta_n, self.min_replicas, self.max_replicas)
         delta_c = int(new_cores - cores_current)
         delta_n = int(new_replicas - n_current)
+
+        # Enforce mode dynamically from finalized deltas
+        if delta_c != 0 and delta_n != 0:
+            mode = "diagonal"
+        elif delta_c != 0:
+            mode = "vertical"
+        elif delta_n != 0:
+            mode = "horizontal"
+        else:
+            mode = "none"
 
         return {
             "mode": mode,

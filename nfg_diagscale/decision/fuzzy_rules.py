@@ -144,12 +144,12 @@ def build_rule_base():
             mode="vertical", delta_c=-1, delta_n=-1,
             justification="[P1+P3] scale-down proportional to overcapacity"
         ),
-        # [P1 sect 5.2] R6: No vertical room, SLO safe -> horizontal add
+        # [P1 sect 5.2] R6: No vertical room, high demand -> horizontal add
         FuzzyRule(
             "R6",
-            {"phi": "exhausted", "rho": "safe"},
+            {"psi": "high", "phi": "exhausted"},
             mode="horizontal", delta_c=0, delta_n=2,
-            justification="[P1 sect 5.2] horizontal when vertical exhausted"
+            justification="[P1 sect 5.2] horizontal when vertical exhausted and demand is high"
         ),
     ]
     return rules
