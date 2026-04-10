@@ -1,28 +1,21 @@
 """
 Adaptive Neuro-Fuzzy Inference System (ANFIS) decision engine.
 
-[Jang93] Jang J.-S.R. (1993), "ANFIS: Adaptive-Network-Based Fuzzy
-  Inference System", IEEE Trans. Syst. Man Cybern. 23(3):665-685.
+ANFIS Architecture (5 layers):
+  Layer 1: Fuzzification - Gaussian membership functions
+    mu_i(x) = exp(-(x - c_i)^2 / (2 * sigma_i^2))
+  Layer 2: Rule firing strengths - product of membership values
+    w_i = prod(mu_ij(x_j))
+  Layer 3: Normalized firing strengths
+    w_bar_i = w_i / sum(w_k)
+  Layer 4: Consequent calculation (Takagi-Sugeno first-order)
+    f_i = p_i*x1 + q_i*x2 + r_i
+  Layer 5: Output summation
+    y = sum(w_bar_i * f_i)
 
-  ANFIS Architecture (5 layers):
-    Layer 1: Fuzzification - Gaussian membership functions
-      mu_i(x) = exp(-(x - c_i)^2 / (2 * sigma_i^2))
-    Layer 2: Rule firing strengths - product of membership values
-      w_i = prod(mu_ij(x_j))
-    Layer 3: Normalized firing strengths
-      w_bar_i = w_i / sum(w_k)
-    Layer 4: Consequent calculation (Takagi-Sugeno first-order)
-      f_i = p_i*x1 + q_i*x2 + r_i
-    Layer 5: Output summation
-      y = sum(w_bar_i * f_i)
-
-  Hybrid learning (Jang93 sect IV):
-    Forward pass: least-squares estimation of consequent parameters
-    Backward pass: gradient descent on premise (MF) parameters
-
-Rules sourced from:
-  [P1] Themis vertical-first strategy (sect 3, sect 5.2)
-  [P3] Diagonal optimality Lemma 1 (sect IV-C)
+Hybrid learning:
+  Forward pass: least-squares estimation of consequent parameters
+  Backward pass: gradient descent on premise (MF) parameters
 """
 import numpy as np
 from nfg_diagscale.decision.fuzzy_rules import (
@@ -46,7 +39,7 @@ class ANFISEngine:
 
         self.rules = build_rule_base()
 
-        # [Jang93] Premise parameters: centers and sigmas for each MF
+        # Premise parameters: centers and sigmas for each MF
         self.mf_params = {}
         for var_name, terms in LINGUISTIC_TERMS.items():
             self.mf_params[var_name] = {}
@@ -56,7 +49,7 @@ class ANFISEngine:
                     "sigma": sigma,
                 }
 
-        # [Jang93] Consequent parameters for Takagi-Sugeno output
+        # Consequent parameters for Takagi-Sugeno output
         # Each rule has linear consequent: f_i = p_i*psi + q_i*omega + r_i*phi + s_i
         self.consequent_params = {}
         for rule in self.rules:
@@ -73,7 +66,7 @@ class ANFISEngine:
 
     def _compute_memberships(self, inputs):
         """
-        [Jang93] Layer 1: Fuzzification using Gaussian MFs.
+        Layer 1: Fuzzification using Gaussian MFs.
         mu_i(x) = exp(-(x - c_i)^2 / (2 * sigma_i^2))
         """
         memberships = {}
@@ -88,7 +81,7 @@ class ANFISEngine:
 
     def _compute_firing_strengths(self, inputs):
         """
-        [Jang93] Layer 2: Rule firing strengths w_i = product of membership values.
+        Layer 2: Rule firing strengths w_i = product of membership values.
         """
         strengths = []
         for rule in self.rules:
@@ -103,7 +96,7 @@ class ANFISEngine:
 
     def _normalize_strengths(self, strengths):
         """
-        [Jang93] Layer 3: Normalized firing strengths.
+        Layer 3: Normalized firing strengths.
         w_bar_i = w_i / sum(w_k)
         """
         total = np.sum(strengths)
@@ -113,14 +106,12 @@ class ANFISEngine:
 
     def _compute_consequents(self, inputs, n_current, cores_current, predicted_rps):
         """
-        [Jang93] Layer 4: Consequent calculation.
+        Layer 4: Consequent calculation.
         For each rule, compute adaptive output based on Takagi-Sugeno model.
 
-        Scaling magnitudes adapt to current state:
-        - [P5 Eq. 7] Horizontal delta from predicted pod count gap
-        - Vertical delta from consequent parameters (learned)
+        Scaling magnitudes adapt to current state.
         """
-        # [P5 Eq. 7] pods_{t+1} = workload_{t+1} / workload_{pod}
+        # pods_{t+1} = workload_{t+1} / workload_{pod}
         # For SCALE-UP: use effective_pod_rps (cores * base) to find the minimum feasible replicas
         # given current core count. This correctly reflects that vertical scaling reduces H_needed.
         effective_pod_rps = self.pod_max_rps * cores_current
@@ -137,22 +128,22 @@ class ANFISEngine:
             omega = inputs.get("omega", 0.5)
             phi = inputs.get("phi", 0.5)
 
-            # [Jang93] f_i = p_i*psi + q_i*omega + r_i*phi + s_i (first-order Sugeno)
+            # f_i = p_i*psi + q_i*omega + r_i*phi + s_i (first-order Sugeno)
             mode_raw = cp["s_mode"] + cp["p"] * psi + cp["q"] * omega
             dc_raw = cp["s_dc"] + cp["r"] * phi
             dn_raw = cp["s_dn"]
 
-            # Adapt horizontal delta based on P5 Eq. 7 pod count gap
+            # Adapt horizontal delta based on pod count gap
             if rule.mode == SCALING_MODES["horizontal"]:
                 dn_raw = float(n_target_up - n_current)
             elif rule.mode == SCALING_MODES["diagonal"]:
-                # [P3 Lemma 1] Diagonal: split between V and H
+                # Diagonal: split between V and H
                 dn_raw = max(1.0, float(np.ceil(psi / 2.0)))
 
             # Scale-down rules: use full surplus to aggressively save costs.
-            # [Audit Fix] Maximize cost savings when Psi is low and headroom is ample
+            # Maximize cost savings when Psi is low and headroom is ample
             if rule.delta_n < 0:
-                # [P5 Eq 7] Release all pods that are not required for current predicted RPS
+                # Release all pods that are not required for current predicted RPS
                 surplus = n_current - n_target_down
                 if surplus > 0:
                     dn_raw = float(-surplus) # Scale down to the bare minimum required
@@ -169,21 +160,21 @@ class ANFISEngine:
     def decide(self, psi, omega, phi, rho, n_current, cores_current, predicted_rps,
                ga_checkpoint=None):
         """
-        [Jang93] Layer 5: Weighted output summation.
+        Layer 5: Weighted output summation.
         y = sum(w_bar_i * f_i)
 
         Full ANFIS forward pass producing scaling decision.
         """
         inputs = {"psi": psi, "omega": omega, "phi": phi, "rho": rho}
 
-        # [Jang93] Layer 1-3: membership -> firing strengths -> normalization
+        # Layer 1-3: membership -> firing strengths -> normalization
         strengths = self._compute_firing_strengths(inputs)
         w_bar = self._normalize_strengths(strengths)
 
-        # [Jang93] Layer 4: consequent outputs
+        # Layer 4: consequent outputs
         consequents = self._compute_consequents(inputs, n_current, cores_current, predicted_rps)
 
-        # [Jang93] Layer 5: weighted summation
+        # Layer 5: weighted summation
         mode_val = sum(w_bar[i] * consequents[i]["mode"] for i in range(len(self.rules)))
         dc_val = sum(w_bar[i] * consequents[i]["delta_c"] for i in range(len(self.rules)))
         dn_val = sum(w_bar[i] * consequents[i]["delta_n"] for i in range(len(self.rules)))
@@ -196,10 +187,14 @@ class ANFISEngine:
             dn_val = 0.9 * dn_val + 0.1 * (h_star - n_current)
             dc_val = 0.9 * dc_val + 0.1 * (c_star - cores_current)
 
-        # [Audit Fix] Apply Deadzone to prevent micro-oscillations (Stability vs Cost)
-        # Suppress changes smaller than 0.15 to avoid jitter.
-        if abs(dn_val) < 0.15: dn_val = 0.0
-        if abs(dc_val) < 0.15: dc_val = 0.0
+        # Apply Adaptive Deadzone to prevent micro-oscillations (Stability vs Cost)
+        # Suppress changes to avoid jitter, especially at low loads
+        # Increase stability threshold when load is safe (psi < 1.1)
+        dz_n = 0.5 if psi < 1.1 else 0.15
+        dz_c = 0.5 if psi < 1.1 else 0.15
+        
+        if abs(dn_val) < dz_n: dn_val = 0.0
+        if abs(dc_val) < dz_c: dc_val = 0.0
 
         # Discretize and clip deltas
         delta_c = int(np.clip(round(dc_val), -2, 4))
@@ -242,7 +237,7 @@ class ANFISEngine:
 
     def update_parameters(self):
         """
-        [Jang93 sect IV] Hybrid learning: backward pass updates premise
+        Hybrid learning: backward pass updates premise
         parameters (MF centers and sigmas) via gradient descent.
 
         Loss = sum_t [L_actual - SLO]_+^2 + alpha * Cost_actual
@@ -254,7 +249,7 @@ class ANFISEngine:
             lat = record["latency"]
             cost = record["cost"]
 
-            # [Grounded in Proposal Sect 5.5, Eq 281] L = (L-SLO)^2 + alpha_cost * Cost
+            # L = (L-SLO)^2 + alpha_cost * Cost
             # We use raw differences as specified; stability is handled by gradient clipping below.
             slo_loss = max(0.0, lat - self.slo) ** 2
             total_loss = slo_loss + self.alpha_cost * cost
@@ -263,7 +258,7 @@ class ANFISEngine:
                 continue
 
             inputs = record["inputs"]
-            # [Jang93] Gradient descent on premise parameters
+            # Gradient descent on premise parameters
             for var_name, value in inputs.items():
                 if var_name not in self.mf_params:
                     continue
@@ -280,7 +275,7 @@ class ANFISEngine:
                     # d(loss)/d(sigma)
                     d_mu_ds = mu * ((value - c) ** 2) / (s ** 3 + 1e-8)
 
-                    # [Audit fix] Gradient clipping for stability
+                    # Gradient clipping for stability
                     grad_scale = total_loss * 0.001 # Reduced scale
                     gc = np.clip(grad_scale * d_mu_dc, -1.0, 1.0)
                     gs = np.clip(grad_scale * d_mu_ds, -1.0, 1.0)

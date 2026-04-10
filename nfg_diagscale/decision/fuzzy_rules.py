@@ -1,18 +1,6 @@
 """
 Fuzzy rule base for the ANFIS decision engine.
 
-Rules derived from:
-[P1] Razavi et al. (2024), Themis, arXiv:2407.14843, Section 3:
-  "initially using in-place vertical scaling to handle workload surges,
-   then switching to horizontal scaling"
-  Section 5.2: When hardware limit is reached, switch to horizontal.
-
-[P3] Abdullah & Zaman (2025), Diagonal Scaling, arXiv:2511.21612
-  Lemma 1, Section IV-C:
-  "If dF/dH != 0 and dF/d||V|| != 0, then the optimal direction
-   is neither horizontal nor vertical."
-  Section V-A, design principle 4: Stability via rebalance penalty.
-
 Rule encoding:
   Each rule maps (Psi, Omega, Phi, rho) -> (mode, delta_c, delta_n)
   Where:
@@ -29,7 +17,7 @@ MODE_NAMES = {0: "vertical", 1: "diagonal", 2: "horizontal"}
 
 def gaussian_mf(x, center, sigma, term_name=""):
     """
-    [Jang93] Gaussian membership function for ANFIS, modified with
+    Gaussian membership function for ANFIS, modified with
     open-ended shoulders (Z-shaped and S-shaped at domain edges)
     so rule firing doesn't drop to 0 at extreme values.
     """
@@ -80,7 +68,7 @@ class FuzzyRule:
 
     def firing_strength(self, inputs):
         """
-        [Jang93] Layer 2: rule firing strength = product of membership values.
+        Layer 2: rule firing strength = product of membership values.
         """
         strength = 1.0
         for var_name, term_name in self.antecedents.items():
@@ -95,61 +83,60 @@ class FuzzyRule:
 
 def build_rule_base():
     """
-    Construct the fuzzy rule base from P1 vertical-first strategy
-    and P3 diagonal optimality theorem.
+    Construct the fuzzy rule base.
     """
     rules = [
         # R0: System stable — no scaling needed.
-        # [P3 sect V-A] Design principle 4: "Stability: Penalize disruptive moves."
+        # Stability: Penalize disruptive moves.
         # When demand matches capacity and SLO is comfortable, hold steady.
         FuzzyRule(
             "R0",
             {"psi": "moderate", "omega": "ample", "rho": "safe"},
             mode="vertical", delta_c=0, delta_n=0,
-            justification="[P3 sect V-A] stability: hold when no stress"
+            justification="stability: hold when no stress"
         ),
-        # [P1 sect 3] R1: Moderate surge, tight headroom -> vertical scale-up
+        # R1: Moderate surge, tight headroom -> vertical scale-up
         FuzzyRule(
             "R1",
             {"psi": "moderate", "omega": "tight"},
             mode="vertical", delta_c=1, delta_n=0,
-            justification="[P1 sect 3] vertical-first for moderate surges with SLO pressure"
+            justification="vertical-first for moderate surges with SLO pressure"
         ),
-        # [P3 Lemma 1] R2: High surge, vertical available -> diagonal
+        # R2: High surge, vertical available -> diagonal
         FuzzyRule(
             "R2",
             {"psi": "high", "phi": "available"},
             mode="diagonal", delta_c=1, delta_n=1,
-            justification="[P3 Lemma 1] diagonal when both gradients non-zero"
+            justification="diagonal when both gradients non-zero"
         ),
-        # [P1 sect 5.2] R3: Critical surge, no vertical room -> horizontal
+        # R3: Critical surge, no vertical room -> horizontal
         FuzzyRule(
             "R3",
             {"psi": "critical", "phi": "exhausted"},
             mode="horizontal", delta_c=0, delta_n=3,
-            justification="[P1 sect 5.2] switch to horizontal at hardware limit"
+            justification="switch to horizontal at hardware limit"
         ),
-        # [P3 Lemma 1] R4: SLO at risk, tight headroom -> emergency diagonal
+        # R4: SLO at risk, tight headroom -> emergency diagonal
         FuzzyRule(
             "R4",
             {"rho": "risky", "omega": "tight"},
             mode="diagonal", delta_c=1, delta_n=1,
-            justification="[P3 Lemma 1] diagonal for dual-axis latency relief"
+            justification="diagonal for dual-axis latency relief"
         ),
-        # [P1+P3] R5: Low demand, ample headroom -> scale down
-        # delta_n is dynamically computed in ANFIS based on P5 Eq. 7 overcapacity
+        # R5: Low demand, ample headroom -> scale down
+        # delta_n is dynamically computed in ANFIS based on overcapacity
         FuzzyRule(
             "R5",
             {"psi": "low", "omega": "ample"},
             mode="vertical", delta_c=-1, delta_n=-1,
-            justification="[P1+P3] scale-down proportional to overcapacity"
+            justification="scale-down proportional to overcapacity"
         ),
-        # [P1 sect 5.2] R6: No vertical room, high demand -> horizontal add
+        # R6: No vertical room, high demand -> horizontal add
         FuzzyRule(
             "R6",
             {"psi": "high", "phi": "exhausted"},
             mode="horizontal", delta_c=0, delta_n=2,
-            justification="[P1 sect 5.2] horizontal when vertical exhausted and demand is high"
+            justification="horizontal when vertical exhausted and demand is high"
         ),
     ]
     return rules

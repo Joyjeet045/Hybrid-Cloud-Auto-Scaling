@@ -1,21 +1,12 @@
 """
 Multi-level metrics collector and composite stress signal.
 
-[P4] Solino, Batista & Cavalcante (2025), ACM UCC'25
+Three monitoring levels:
+  - Host: CPU%, Memory%
+  - Container: per-container CPU, Memory
+  - Platform: internal operation execution time
 
-  Section 2.1: Three monitoring levels:
-    - Host: CPU%, Memory% (gathered by Metricbeat)
-    - Container: per-container CPU, Memory (gathered by Metricbeat)
-    - Platform: internal operation execution time (gathered by AspectJ+Filebeat)
-
-  Section 3: "We accomplish this through AspectJ, an AOP-compliant Java
-    extension. We define aspects that capture the start and end timestamps
-    of critical internal methods or operations."
-
-  Algorithm 1 (P4): SymptomDetection procedure checks thresholds at
-  all three levels.
-
-Composite stress signal (author synthesis of P4's multi-level data):
+Composite stress signal:
   Sigma_stress(t) = w1 * CPU(t)/CPU_max + w2 * L_app(t)/SLO + w3 * Q(t)/Q_max
 """
 import numpy as np
@@ -23,7 +14,7 @@ import numpy as np
 
 class MetricsCollector:
     def __init__(self, config):
-        # Stress signal weights (our synthesis of P4 multi-level monitoring)
+        # Stress signal weights
         scfg = config["stress"]
         self.w1 = scfg["w1_cpu"]
         self.w2 = scfg["w2_latency"]
@@ -33,20 +24,15 @@ class MetricsCollector:
 
     def collect_from_state(self, cloud_state):
         """
-        [P4 sect 2.1] Collect metrics at three levels from cloud environment state.
-
-        [P4 Algorithm 1] SymptomDetection:
-          - clusterSymptomDetection: host-level CPU/Mem
-          - containerSymptomDetection: per-container metrics
-          - platformSymptomDetection: application-level metrics
+        Collect metrics at three levels from cloud environment state.
         """
         metrics = {
-            # [P4 sect 2.1] Host level
+            # Host level
             "cpu_utilization": cloud_state.get("cpu_utilization", 0.0),
             "memory_utilization": cloud_state.get("memory_utilization", 0.0),
-            # [P4 sect 2.1] Container level
+            # Container level
             "per_container_cpu": cloud_state.get("per_container_cpu", 0.0),
-            # [P4 sect 2.1, sect 3] Platform level (AOP-intercepted)
+            # Platform level
             "app_latency": cloud_state.get("app_latency", 0.0),
             "queue_depth": cloud_state.get("queue_depth", 0.0),
             # Raw measurements
@@ -58,21 +44,21 @@ class MetricsCollector:
 
     def compute_stress(self, metrics):
         """
-        Composite stress signal (our synthesis of P4's three monitoring levels).
+        Composite stress signal.
         Sigma_stress = w1 * CPU/CPU_max + w2 * L_app/SLO + w3 * Q/Q_max
         """
         cpu_frac = min(metrics["cpu_utilization"], 1.0)
         lat_frac = min(metrics["app_latency"] / self.slo, 1.5)
         q_frac = min(metrics["queue_depth"] / self.q_max, 1.5)
 
-        # [P4 Algorithm 1] Use maximum stress across any dimension to trigger symptoms.
+        # Use maximum stress across any dimension to trigger symptoms.
         # This prevents the signal from being dampened by other healthy dimensions.
         sigma = max(cpu_frac, lat_frac, q_frac)
         return sigma
 
     def detect_violation(self, sigma_stress, upper=0.5, lower=0.4):
         """
-        [P4 sect 2.2] Reaction thresholds.
+        Reaction thresholds.
         Lowered to 0.5 to ensure proactive handling when any metric hits half-capacity.
         """
         if sigma_stress > upper:

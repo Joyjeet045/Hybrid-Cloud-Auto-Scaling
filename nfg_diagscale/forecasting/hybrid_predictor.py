@@ -2,21 +2,15 @@
 Hybrid Prophet-LSTM predictor combining seasonal decomposition with
 residual correction.
 
-[P5] Guruge & Priyadarshana (2025), Front. Comput. Sci. 7:1509165, Section 3.1:
-  "The proposed model has two layers with 50 units and one dense layer."
+Fused prediction:
+  hat_lambda_{t+k} = hat_lambda^(P)_{t+k} + hat_r_{t+k}
 
-  Fused prediction (P5 sect 3.1):
-    hat_lambda_{t+k} = hat_lambda^(P)_{t+k} + hat_r_{t+k}
+Where:
+  hat_lambda^(P) = Prophet seasonal prediction
+  hat_r          = LSTM residual correction
 
-  Where:
-    hat_lambda^(P) = Prophet seasonal prediction
-    hat_r          = LSTM residual correction
-
-  [P5 sect 3.2.2, Eq. 7] Pod count formula:
-    pods_{t+1} = workload_{t+1} / workload_{pod}
-
-  [P5 Eq. 14] Total prediction time:
-    TPT = Prophet_Prediction_Time + LSTM_Prediction_Time
+Pod count formula:
+  pods_{t+1} = workload_{t+1} / workload_{pod}
 """
 import numpy as np
 import time
@@ -39,14 +33,14 @@ class HybridPredictor:
 
     def train(self, train_df):
         """
-        [P5 sect 3.1] Two-phase training:
+        Two-phase training:
         Phase 1: Train Prophet on raw time series to capture seasonality.
         Phase 2: Compute residuals, train LSTM on residuals.
         """
-        # Cap training data to last 15,000 points for performance
-        # (roughly 10 days of NASA traffic at 1min aggregation)
-        if len(train_df) > 15000:
-            train_df = train_df.iloc[-15000:].copy()
+        # Cap training data to last 20,000 points for performance
+        # (roughly 14 days of NASA traffic at 1min aggregation - enough for seasonality)
+        if len(train_df) > 20000:
+            train_df = train_df.iloc[-20000:].copy()
 
         print(f"[HybridPredictor] Phase 1: Training Prophet on {len(train_df)} samples...")
         t0 = time.time()
@@ -54,7 +48,7 @@ class HybridPredictor:
         t_prophet = time.time() - t0
 
         print("[HybridPredictor] Phase 2: Computing residuals and training LSTM...")
-        # [P5 sect 3.1] r_t = lambda_t - hat_lambda^(P)_t
+        # r_t = lambda_t - hat_lambda^(P)_t
         residuals, prophet_pred = self.prophet.compute_residuals(train_df)
         self._residual_buffer = list(residuals)
 
@@ -63,19 +57,19 @@ class HybridPredictor:
         self.lstm.train(residuals)
         t_lstm = time.time() - t0
 
-        # [P5 Eq. 14] TPT = Prophet_Prediction_Time + LSTM_Prediction_Time
+        # TPT = Prophet_Prediction_Time + LSTM_Prediction_Time
         print(f"[HybridPredictor] Training complete. "
               f"Prophet: {t_prophet:.1f}s, LSTM: {t_lstm:.1f}s")
         self._trained = True
 
     def predict_next(self, current_rps, current_df_row=None):
         """
-        [P5 sect 3.1] Fused prediction:
+        Fused prediction:
           hat_lambda_{t+k} = hat_lambda^(P)_{t+k} + hat_r_{t+k}
 
-        [P2 sect 3.3] Also update Kalman filter with observed RPS.
+        Also update Kalman filter with observed RPS.
         """
-        # [P2 sect 3.3] Kalman filter update for smoothed current RPS
+        # Kalman filter update for smoothed current RPS
         lambda_kf = self.kalman.update(current_rps)
 
         if not self._trained or len(self._residual_buffer) < self.lookback:
@@ -86,18 +80,18 @@ class HybridPredictor:
                 "lstm_residual": 0.0,
             }
 
-        # [P5 sect 3.1] Get Prophet seasonal prediction
+        # Get Prophet seasonal prediction
         prophet_val = current_rps
         if current_df_row is not None:
             prophet_vals = self.prophet.get_seasonal_prediction(current_df_row)
             if len(prophet_vals) > 0:
                 prophet_val = prophet_vals[-1]
 
-        # [P5 sect 3.1] LSTM residual prediction
+        # LSTM residual prediction
         recent_residuals = self._residual_buffer[-self.lookback:]
         lstm_residual = self.lstm.predict(recent_residuals)
 
-        # [P5 sect 3.1] hat_lambda_{t+k} = hat_lambda^(P)_{t+k} + hat_r_{t+k}
+        # hat_lambda_{t+k} = hat_lambda^(P)_{t+k} + hat_r_{t+k}
         lambda_hat = prophet_val + lstm_residual
 
         # Update residual buffer with observed residual
@@ -113,7 +107,7 @@ class HybridPredictor:
 
     def predict_batch(self, test_df):
         """
-        [P5 sect 3.1] Batch prediction for evaluation.
+        Batch prediction for evaluation.
         Returns array of fused predictions aligned with test data.
         """
         if not self._trained:
@@ -135,7 +129,7 @@ class HybridPredictor:
                 window = all_residuals[idx - self.lookback:idx]
                 lstm_pred[i] = self.lstm.predict(window)
 
-        # [P5 sect 3.1] hat_lambda = hat_lambda^(P) + hat_r
+        # hat_lambda = hat_lambda^(P) + hat_r
         fused = prophet_pred + lstm_pred
         fused = np.maximum(fused, 0.0)
         return fused, prophet_pred, lstm_pred
@@ -143,7 +137,7 @@ class HybridPredictor:
     @staticmethod
     def compute_pod_count(predicted_rps, pod_max_rps):
         """
-        [P5 sect 3.2.2, Eq. 7] pods_{t+1} = workload_{t+1} / workload_{pod}
+        pods_{t+1} = workload_{t+1} / workload_{pod}
         """
         if pod_max_rps <= 0:
             return 1

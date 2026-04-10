@@ -1,15 +1,9 @@
 """
 NSGA-II Multi-Objective Optimizer on the Diagonal Scaling Plane.
 
-[Novel Claim N3] Trajectory Optimizer:
+Trajectory Optimizer:
   Replaces single-step optimization with a T-step trajectory chromosome.
   Encodes [(H1, c1), (H2, c2), ..., (HT, cT)] to optimize the entire path on the plane.
-
-[Deb02] Deb K. et al. (2002), "A Fast and Elitist Multiobjective Genetic
-  Algorithm: NSGA-II", IEEE Trans. Evol. Comput. 6(2):182-197.
-
-[P3] Abdullah & Zaman (2025), arXiv:2511.21612:
-  - sect V-D: Rebalance penalty integrated into fitness evaluation
 """
 import numpy as np
 from nfg_diagscale.optimizer.scaling_plane import ScalingPlane
@@ -18,7 +12,7 @@ from nfg_diagscale.optimizer.rebalance_penalty import RebalancePenalty
 
 class Individual:
     """
-    [Novel Claim N3] Chromosome encodes a complete T-step scaling trajectory.
+    Chromosome encodes a complete T-step scaling trajectory.
     """
     def __init__(self, trajectory, ram=8, bw=1, s=1000):
         # trajectory is a list of (H, c) tuples for T steps
@@ -47,7 +41,7 @@ class NSGA2Optimizer:
         self.n_gen = ncfg["generations"]
         self.crossover_prob = ncfg["crossover_prob"]
         self.mutation_prob = ncfg["mutation_prob"]
-        self.T = ncfg.get("horizon_steps", 4) # T-step horizon [N3]
+        self.T = ncfg.get("horizon_steps", 4) # T-step horizon
 
         cloud = config["cloud"]
         self.min_H = cloud["min_replicas"]
@@ -79,9 +73,9 @@ class NSGA2Optimizer:
             trajectory.append([H, float(c)])
         return Individual(trajectory)
 
-    def _evaluate(self, ind, current_H, current_cores, predicted_rps):
+    def _evaluate(self, ind, current_H, current_cores, predicted_rps, low_load_mode=False):
         """
-        [Novel Claim N3] Cumulative trajectory evaluation.
+        Cumulative trajectory evaluation.
         f1: Cumulative infrastructure cost
         f2: Cumulative SLO violation risk
         f3: Cumulative rebalance penalty along the path
@@ -103,10 +97,16 @@ class NSGA2Optimizer:
             )
             f2_sum += max(0, lat - self.slo) / self.slo
 
-            # f3: Rebalance penalty for transition to this step [P3 sect V-D]
-            # [Audit Fix] Prefer vertical (rebalance=0) over horizontal moves
+            # f3: Rebalance penalty for transition to this step
+            # Prefer vertical (rebalance=0) over horizontal moves
             curr_V = (c_step, 8.0, 1.0, 1000.0)
-            f3_sum += self.rebalance.compute(prev_H, prev_V, H_step, curr_V) * 1.2
+            rebalance_penalty = self.rebalance.compute(prev_H, prev_V, H_step, curr_V)
+            
+            # Low-load mode extra penalty
+            if getattr(self, "low_load_mode", False):
+                rebalance_penalty *= 2.5 # Aggressively avoid new pods if possible
+                
+            f3_sum += rebalance_penalty * 1.2
 
             prev_H = H_step
             prev_V = curr_V
@@ -114,7 +114,7 @@ class NSGA2Optimizer:
         ind.objectives = [f1_sum, f2_sum, f3_sum]
 
     def _non_dominated_sort(self, population):
-        """[Deb02 sect III-A] Fast non-dominated sorting."""
+        """Fast non-dominated sorting."""
         fronts = [[]]
         for p in population:
             p.domination_count = 0
@@ -151,7 +151,7 @@ class NSGA2Optimizer:
         return at_least_one_better
 
     def _crowding_distance(self, front):
-        """[Deb02 sect III-B] Diversity preservation."""
+        """Diversity preservation."""
         n = len(front)
         if n <= 2:
             for ind in front: ind.crowding_distance = float("inf")
@@ -175,7 +175,7 @@ class NSGA2Optimizer:
         return a.copy() if a.crowding_distance > b.crowding_distance else b.copy()
 
     def _crossover(self, p1, p2):
-        """Single-point crossover on the trajectory time index [N3]."""
+        """Single-point crossover on the trajectory time index."""
         if np.random.random() > self.crossover_prob:
             return p1.copy(), p2.copy()
 
@@ -200,8 +200,9 @@ class NSGA2Optimizer:
                 self.min_c, self.max_c
             ))
 
-    def optimize(self, current_H, current_cores, predicted_rps):
+    def optimize(self, current_H, current_cores, predicted_rps, low_load_mode=False):
         """Run NSGA-II to find Pareto-optimal trajectories."""
+        self.low_load_mode = low_load_mode
         pop = [self._random_individual_alt() for _ in range(self.pop_size)]
         for ind in pop:
             self._evaluate(ind, current_H, current_cores, predicted_rps)
@@ -213,8 +214,8 @@ class NSGA2Optimizer:
                 c1, c2 = self._crossover(p1, p2)
                 self._mutate(c1)
                 self._mutate(c2)
-                self._evaluate(c1, current_H, current_cores, predicted_rps)
-                self._evaluate(c2, current_H, current_cores, predicted_rps)
+                self._evaluate(c1, current_H, current_cores, predicted_rps, low_load_mode)
+                self._evaluate(c2, current_H, current_cores, predicted_rps, low_load_mode)
                 offspring.extend([c1, c2])
 
             combined = pop + offspring[:self.pop_size]

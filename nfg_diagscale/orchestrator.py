@@ -1,18 +1,11 @@
 """
 MAPE-K orchestrator implementing the NFG-DiagScale control loop.
 
-[P4] Solino, Batista & Cavalcante (2025), ACM UCC'25, Section 2:
-  "MAPE-K operates in four phases in a continuous feedback cycle:
-   (1) Monitor: continuously observes the system
-   (2) Analyze: evaluates monitored data to determine if adaptation is required
-   (3) Plan: builds an action plan
-   (4) Execute: applies the planned changes"
-
-Full algorithm pseudocode from proposal Section 8:
-  MONITOR  -> collect metrics at 3 levels [P4]
-  ANALYZE  -> heat check [P4 Alg 3], Kalman [P2], Prophet-LSTM [P5], Themis [P1]
-  PLAN     -> ANFIS decision [Jang93], NSGA-II checkpoint [P3+GA]
-  EXECUTE  -> scaling action [P1 vertical, P3 diagonal, P5 horizontal]
+MAPE-K operates in four phases in a continuous feedback cycle:
+ (1) Monitor: continuously observes the system
+ (2) Analyze: evaluates monitored data to determine if adaptation is required
+ (3) Plan: builds an action plan
+ (4) Execute: applies the planned changes
 """
 import numpy as np
 import pandas as pd
@@ -31,19 +24,19 @@ class NFGDiagScaleOrchestrator:
         self.config = config
         self.predictor = predictor
 
-        # [P4 sect 2.1] Monitor: multi-level metrics
+        # Monitor: multi-level metrics
         self.metrics_collector = MetricsCollector(config)
 
-        # [P4 sect 2.2, Alg 3] Heat-based oscillation suppression
+        # Heat-based oscillation suppression
         self.heat_acc = HeatAccumulator(config)
 
-        # [P1] Themis latency model for SLO risk
+        # Themis latency model for SLO risk
         self.themis = ThemisLatencyModel(config)
 
-        # [Jang93] ANFIS decision engine
+        # ANFIS decision engine
         self.anfis = ANFISEngine(config)
 
-        # [P3+GA] NSGA-II global optimizer
+        # NSGA-II global optimizer
         self.nsga2 = NSGA2Optimizer(config)
 
         self.ga_run_interval = config["nsga2"]["run_interval_steps"]
@@ -54,7 +47,7 @@ class NFGDiagScaleOrchestrator:
         self.ga_checkpoint = None
         self.name = "NFG-DiagScale"
 
-        # [P4 Alg 4] Cooldown: prevent action stacking while pending actions mature.
+        # Cooldown: prevent action stacking while pending actions mature.
         # Minimum steps between consecutive scaling decisions.
         self._cooldown_remaining = 0
         self._cooldown_steps = config.get("mape_k", {}).get("cooldown_steps", 5)
@@ -65,6 +58,13 @@ class NFGDiagScaleOrchestrator:
         Returns history and action log for KPI evaluation.
         """
         env = CloudEnvironment(self.config)
+        
+        # Warm-up/Initialization: Start with capacity matching the initial load
+        # to avoid astronomical latencies on the very first step.
+        initial_rps = float(test_df["y"].iloc[0])
+        initial_pods = int(np.ceil(initial_rps / (self.config["cloud"]["max_cores"] * self.pod_max_rps)))
+        env.replicas = int(np.clip(initial_pods, self.config["cloud"]["min_replicas"], self.config["cloud"]["max_replicas"]))
+        env.cores = self.config["cloud"]["max_cores"] # Start with full cores vertically to be safe
         action_log = []
 
         rps_values = test_df["y"].values
@@ -79,23 +79,23 @@ class NFGDiagScaleOrchestrator:
             # ── EXECUTE environment step ──
             state = env.step(actual_rps)
 
-            # ── MONITOR [P4 sect 2.1] ──
+            # MONITOR
             metrics = self.metrics_collector.collect_from_state(state)
             sigma_stress = self.metrics_collector.compute_stress(metrics)
 
-            # ── ANALYZE [P4 sect 2.2] ──
+            # ANALYZE
             violation = self.metrics_collector.detect_violation(sigma_stress)
 
-            # [P4 Alg 3] Heat accumulator check
+            # Heat accumulator check
             self.heat_acc.update(violation)
 
-            # [P4 Alg 4] Enforce cooldown to prevent action-on-action thrashing
+            # Enforce cooldown to prevent action-on-action thrashing
             if self._cooldown_remaining > 0:
                 self._cooldown_remaining -= 1
                 action_log.append({"step": step, "mode": "none", "delta_c": 0, "delta_n": 0})
                 continue
 
-            # [P2 sect 3.3] Kalman filter + [P5 sect 3.1] Prophet-LSTM prediction
+            # Kalman filter and Prophet-LSTM prediction
             row_df = None
             if ds_values is not None:
                 row_df = pd.DataFrame({"ds": [ds_values[step]], "y": [actual_rps]})
@@ -113,7 +113,7 @@ class NFGDiagScaleOrchestrator:
                 continue
             self.heat_acc.reset()
 
-            # [P1 Eq. 1, Eq. 5] Themis SLO risk from predicted workload
+            # Themis SLO risk from predicted workload
             rho = self.themis.slo_risk(
                 self.batch_size, env.cores, lambda_hat, env.replicas
             )
@@ -136,25 +136,37 @@ class NFGDiagScaleOrchestrator:
             phi = 1.0 - env.cores / self.config["cloud"]["max_cores"]
 
             # ── PLAN ──
-            # [P3+GA] Periodic NSGA-II optimization
+            # Periodic NSGA-II optimization
             if step > 0 and step % self.ga_run_interval == 0:
-                pareto = self.nsga2.optimize(env.replicas, env.cores, lambda_hat)
+                # Low-load vertical bias
+                # If RPS is low, we want to stay vertical to avoid rebalance delays
+                low_load_mode = lambda_hat < 150.0
+                pareto = self.nsga2.optimize(env.replicas, env.cores, lambda_hat, low_load_mode)
                 if pareto:
                     self.ga_checkpoint = self.nsga2.get_nearest_checkpoint(
                         env.replicas, env.cores
                     )
 
-            # [Jang93] ANFIS decision
+            # ANFIS decision
             decision = self.anfis.decide(
                 psi=psi, omega=omega, phi=phi, rho=rho,
                 n_current=env.replicas, cores_current=env.cores,
                 predicted_rps=lambda_hat, ga_checkpoint=self.ga_checkpoint,
             )
 
-            # ── EXECUTE [P1 vertical, P3 diagonal, P4 horizontal] ──
+            # EXECUTE scaling action
             mode = decision["mode"]
             delta_c = decision["delta_c"]
             delta_n = decision["delta_n"]
+
+            # Scale-down Hysteresis for stability
+            # If we scaled UP (N) recently, don't scale DOWN (N) for 5 steps
+            if delta_n > 0:
+                self._last_scale_up_step = step
+            elif delta_n < 0:
+                cooldown = 6
+                if step - getattr(self, "_last_scale_up_step", -100) < cooldown:
+                    delta_n = 0 # Block the scale down to prevent jitter
 
             # Only record and execute if a real change is produced
             if delta_c == 0 and delta_n == 0:
@@ -187,7 +199,7 @@ class NFGDiagScaleOrchestrator:
                 cost_observed=state["step_cost"],
             )
 
-            # [Jang93 sect IV] Periodic ANFIS parameter update
+            # Periodic ANFIS parameter update
             if step > 0 and step % 60 == 0:
                 self.anfis.update_parameters()
 
@@ -204,6 +216,12 @@ class BaselineRunner:
 
     def run_evaluation(self, test_df):
         env = CloudEnvironment(self.config)
+        
+        # Consistent initialization with NFG-DiagScale
+        initial_rps = float(test_df["y"].iloc[0])
+        initial_pods = int(np.ceil(initial_rps / (self.config["cloud"]["max_cores"] * self.config["cloud"]["pod_max_rps"])))
+        env.replicas = int(np.clip(initial_pods, self.config["cloud"]["min_replicas"], self.config["cloud"]["max_replicas"]))
+        env.cores = self.config["cloud"]["max_cores"]
         action_log = []
         rps_values = test_df["y"].values
 

@@ -1,11 +1,5 @@
 """
 Dataset loader for NASA HTTP and FIFA World Cup 1998 traces.
-
-[P5] Guruge & Priyadarshana (2025), Front. Comput. Sci. 7:1509165
-  - sect 4.1.1: NASA Kennedy Space Center HTTP logs, Jul-Aug 1995, 3,461,612 requests
-  - sect 4.1.2: FIFA World Cup 1998 HTTP logs, Apr-Jul 1998, 1,352,804,107 requests
-  - sect 4.2: "took 70% for training and 30% for evaluation while preserving the time order"
-  - Preprocessing: "aggregate same-minute logs to calculate the HTTP request rate per minute"
 """
 import os
 import re
@@ -22,9 +16,11 @@ NASA_URLS = [
     "https://ita.ee.lbl.gov/traces/NASA_access_log_Aug95.gz",
 ]
 
+FIFA_URL = "https://raw.githubusercontent.com/nimamahmoudi/worldcup98-dataset/master/invocation_count.csv"
+
 DATA_DIR = os.path.join(os.path.dirname(__file__), "datasets")
 
-# [P5 sect 4.1.1] Apache Common Log Format timestamp pattern
+# Apache Common Log Format timestamp pattern
 LOG_TIMESTAMP_RE = re.compile(r'\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2})')
 
 
@@ -72,7 +68,7 @@ def download_nasa(data_dir=None):
 
     print(f"[Data] Parsed {len(timestamps)} requests total")
 
-    # [P5 sect 4.1.1] "aggregate same-minute logs to calculate the HTTP request rate per minute"
+    # Aggregate same-minute logs to calculate the HTTP request rate per minute
     ts_series = pd.Series(timestamps)
     ts_series = ts_series.dt.floor("min")
     counts = ts_series.value_counts().sort_index()
@@ -80,7 +76,7 @@ def download_nasa(data_dir=None):
     df = pd.DataFrame({"ds": counts.index, "y": counts.values})
     df = df.sort_values("ds").reset_index(drop=True)
 
-    # [P5 sect 4.2] "replace missing data with zero"
+    # Replace missing data with zero
     full_range = pd.date_range(df["ds"].min(), df["ds"].max(), freq="min")
     df = df.set_index("ds").reindex(full_range, fill_value=0).reset_index()
     df.columns = ["ds", "y"]
@@ -90,12 +86,35 @@ def download_nasa(data_dir=None):
     return df
 
 
+def download_fifa(data_dir=None):
+    """Download the pre-processed FIFA World Cup 1998 dataset."""
+    if data_dir is None:
+        data_dir = DATA_DIR
+    os.makedirs(data_dir, exist_ok=True)
+
+    csv_path = os.path.join(data_dir, "fifa_rps.csv")
+    if os.path.exists(csv_path):
+        print(f"[Data] FIFA dataset already cached at {csv_path}")
+        return pd.read_csv(csv_path, parse_dates=["ds"])
+
+    print(f"[Data] Downloading FIFA dataset from {FIFA_URL} ...")
+    resp = requests.get(FIFA_URL, timeout=120)
+    resp.raise_for_status()
+    
+    # Load and rename columns to ds, y
+    df = pd.read_csv(io.StringIO(resp.text))
+    df = df.rename(columns={"period": "ds", "count": "y"})
+    df["ds"] = pd.to_datetime(df["ds"])
+    
+    df.to_csv(csv_path, index=False)
+    print(f"[Data] FIFA dataset saved to {csv_path}, shape={df.shape}")
+    return df
+
+
 def load_fifa_from_csv(csv_path):
     """
     Load FIFA World Cup 1998 dataset from a user-provided CSV.
 
-    [P5 sect 4.1.2] The FIFA dataset is very large (1.35 billion requests).
-    It must be pre-downloaded and pre-aggregated to request-rate-per-minute.
     Expected CSV format: columns 'ds' (datetime) and 'y' (request count per minute).
     """
     df = pd.read_csv(csv_path, parse_dates=["ds"])
@@ -107,9 +126,6 @@ def generate_synthetic_fifa(n_days=30, seed=42):
     """
     Generate a synthetic FIFA-like trace with extreme spikes for testing
     when the real FIFA dataset is not available.
-
-    [P5 sect 4.1.2] "demonstrates more significant anomalies than the NASA dataset"
-    This captures that spike characteristic for development purposes.
     """
     rng = np.random.RandomState(seed)
     n_minutes = n_days * 24 * 60
@@ -139,8 +155,7 @@ def generate_synthetic_fifa(n_days=30, seed=42):
 
 def train_test_split(df, train_ratio=0.7):
     """
-    [P5 sect 4.2] "took 70% for training and 30% for evaluation
-    while preserving the time order"
+    Splits the dataset while preserving time order.
     """
     n = len(df)
     split_idx = int(n * train_ratio)
@@ -153,6 +168,8 @@ def load_dataset(config):
 
     if name == "nasa":
         df = download_nasa()
+    elif name == "fifa":
+        df = download_fifa()
     elif name == "fifa_synthetic":
         df = generate_synthetic_fifa()
     elif name.endswith(".csv"):
@@ -165,5 +182,10 @@ def load_dataset(config):
         df = df.set_index("ds").resample(f"{agg}min").sum().reset_index()
 
     train_df, test_df = train_test_split(df, ratio)
-    print(f"[Data] Dataset '{name}': train={len(train_df)}, test={len(test_df)}")
+    
+    # Convert from requests-per-minute (raw dataset) to requests-per-second (simulator units)
+    train_df["y"] = train_df["y"] / 60.0
+    test_df["y"] = test_df["y"] / 60.0
+    
+    print(f"[Data] Dataset '{name}': train={len(train_df)}, test={len(test_df)} (converted to RPS)")
     return train_df, test_df

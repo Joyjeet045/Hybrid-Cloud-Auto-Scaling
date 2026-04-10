@@ -5,11 +5,11 @@ NFG-DiagScale: Neuro-Fuzzy-Genetic Diagonal Auto-Scaler
 End-to-end evaluation pipeline.
 
 This script:
-  1. Loads real datasets (NASA HTTP / FIFA World Cup 1998)  [P5 sect 4.1]
-  2. Trains Prophet-LSTM hybrid predictor                    [P5 sect 3.1]
-  3. Runs NFG-DiagScale (MAPE-K + ANFIS + NSGA-II)         [P4, Jang93, P3]
-  4. Runs baselines (HPA, VPA, DiagonalScale)               [P4 sect 5, P3]
-  5. Computes KPIs and generates comparison plots            [P5 Eq. 10-13]
+  1. Loads real datasets (NASA HTTP / FIFA World Cup 1998)
+  2. Trains Prophet-LSTM hybrid predictor
+  3. Runs NFG-DiagScale (MAPE-K + ANFIS + NSGA-II)
+  4. Runs baselines (HPA, VPA, DiagonalScale)
+  5. Computes KPIs and generates comparison plots
 
 Usage:
   python main.py                       # NASA dataset (default)
@@ -61,7 +61,7 @@ def main():
     print("NFG-DiagScale: Neuro-Fuzzy-Genetic Diagonal Auto-Scaler")
     print("=" * 70)
 
-    # ── Step 1: Load dataset [P5 sect 4.1] ──
+    # ── Step 1: Load dataset ──
     print("\n[Step 1] Loading dataset...")
     train_df, test_df = load_dataset(config)
 
@@ -69,14 +69,14 @@ def main():
         test_df = test_df.iloc[:args.max_steps].copy()
         print(f"[Step 1] Limited test set to {args.max_steps} steps")
 
-    # ── Step 2: Train Prophet-LSTM [P5 sect 3.1] ──
+    # ── Step 2: Train Prophet-LSTM ──
     print("\n[Step 2] Training Prophet-LSTM hybrid predictor...")
     t0 = time.time()
     predictor = HybridPredictor(config)
     predictor.train(train_df)
     print(f"[Step 2] Training complete in {time.time()-t0:.1f}s")
 
-    # ── Step 2b: Evaluate forecast accuracy [P5 Eq. 10-13] ──
+    # ── Step 2b: Evaluate forecast accuracy ──
     print("\n[Step 2b] Evaluating forecast accuracy on test set...")
     predictions, prophet_pred, lstm_pred = predictor.predict_batch(test_df)
     actual = test_df["y"].values
@@ -87,7 +87,7 @@ def main():
     print(f"  MAPE: {forecast_mape(actual[:n], predictions[:n]):.2f}%")
     print(f"  R^2:  {forecast_r2(actual[:n], predictions[:n]):.4f}")
 
-    # ── Step 3: Run NFG-DiagScale [P4 MAPE-K + Jang93 ANFIS + P3 NSGA-II] ──
+    # ── Step 3: Run NFG-DiagScale ──
     print("\n[Step 3] Running NFG-DiagScale...")
     t0 = time.time()
     nfg = NFGDiagScaleOrchestrator(config, predictor)

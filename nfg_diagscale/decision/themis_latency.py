@@ -3,12 +3,8 @@ import numpy as np
 
 class ThemisLatencyModel:
     """
-    [P1] Razavi et al. (2024), "A Tale of Two Scales" (Themis), arXiv:2407.14843
-
-    Audit Correction (v2):
-    - Removed hallucinated analytical formulas for processing and queuing latency.
-    - Implemented profiling-based latency lookup as described in P1 Section 4.1.
-    - L_total(b, c, n, lambda) = L_profile(b, c) + L_queue(lambda, b, n)
+    Latency model following the profiling-based approach.
+    L_total(b, c, n, lambda) = L_profile(b, c) + L_queue(lambda, b, n)
     """
 
     def __init__(self, config):
@@ -17,14 +13,12 @@ class ThemisLatencyModel:
         self.default_batch = tcfg.get("batch_size", 1)
         self.slo = tcfg.get("slo_ms", 100.0)
 
-        # [P1 Section 4.1] "Themis uses a profiling phase to measure latencies..."
-        # We pre-compute a profiling table indexed by (batch_size, CPU_cores).
-        # In a real system, this would be filled with real-world measurements.
+        # We use a profiling table indexed by (batch_size, CPU_cores).
         self._generate_profile_table(config)
 
     def _generate_profile_table(self, config):
         """
-        Generate a profiling table based on the characteristics described in P1.
+        Generate a profiling table based on simulated measurements.
         Processing latency decreases as cores increase and increases with batch size.
         """
         self.profile_table = {}
@@ -38,26 +32,24 @@ class ThemisLatencyModel:
 
     def processing_latency(self, batch_size, cores):
         """
-        [P1 sect 4.1] L_profile(b, c) - Looked up from offline profiling table.
+        Looks up processing latency from the offline profiling table.
         """
         c_idx = int(np.clip(round(cores), 1, len(self.profile_table)))
         return self.profile_table.get(c_idx, 10.0)
 
     def queuing_latency(self, batch_size, arrival_rate):
         """
-        [P1 sect 4.2] q(b) estimated numerically.
-        Themis uses a DP/IP solver for queuing; here we use the principle that
-        at arrival_rate, wait time is proportional to (batch-1)/RPS.
+        Estimates queuing latency numerically.
+        Wait time is proportional to (batch-1)/RPS.
         """
         if arrival_rate <= 0:
             return 0.0
-        # This is a standard approximation consistent with P1's batching logic
+        # Estimation consistent with batching logic
         return (max(batch_size, 1) - 1) / arrival_rate
 
     def total_latency(self, batch_size, cores, arrival_rate, num_replicas):
         """
-        [P1 Eq. 5 principle] L_total = L_profile(b, c) + L_queue(lambda_eff)
-        Adds congestion-based degradation for realism (as in CloudEnvironment).
+        Total latency = processing latency + queuing latency.
         """
         if num_replicas <= 0:
             return 1000.0  # Max penalty

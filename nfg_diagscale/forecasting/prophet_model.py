@@ -1,29 +1,5 @@
 """
 Prophet seasonal decomposition for workload forecasting.
-
-[P5] Guruge & Priyadarshana (2025), Front. Comput. Sci. 7:1509165, Section 3.1:
-  "The Prophet model captures the seasonality of data for time
-   series forecasting..."
-
-  Decomposition (P5 sect 3.1):
-    y(t) = g(t) + s(t) + h(t) + epsilon_t
-
-  Where:
-    g(t) = piecewise-linear growth trend
-    s(t) = Fourier-series seasonality
-    h(t) = holiday/event effects
-    epsilon_t ~ N(0, sigma^2)
-
-  [P5 Table 2] Prophet configuration:
-    Growth = Linear
-    Changepoint prior scale = 5.1
-    Yearly seasonality = False
-    Weekly seasonality = 20
-    Daily seasonality = 50
-    Seasonality prior scale = 30
-
-  [P5 sect 3.1.4] Time complexity:
-    O(T * (k + m + n)) where k=Fourier order, m=changepoints, n=iterations
 """
 import pandas as pd
 import numpy as np
@@ -43,7 +19,7 @@ class ProphetForecaster:
 
     def _create_model(self):
         """
-        [P5 Table 2] Model configuration as specified in the paper.
+        Model configuration for seasonal decomposition.
         """
         model = Prophet(
             growth=self.config["growth"],
@@ -58,9 +34,7 @@ class ProphetForecaster:
     def train(self, train_df):
         """
         Train Prophet on historical workload data.
-
-        [P5 sect 3.1] Prophet expects DataFrame with columns 'ds' and 'y'.
-        [P5 sect 4.2] "took 70% for training... preserving the time order"
+        Prophet expects DataFrame with columns 'ds' and 'y'.
         """
         df = train_df[["ds", "y"]].copy()
         df["ds"] = pd.to_datetime(df["ds"])
@@ -72,7 +46,7 @@ class ProphetForecaster:
 
     def predict(self, periods, freq="min"):
         """
-        [P5 sect 3.1] Generate seasonal forecast for future periods.
+        Generate seasonal forecast for future periods.
         Returns DataFrame with 'ds', 'yhat' (and components trend, seasonal).
         """
         if not self._trained:
@@ -84,8 +58,8 @@ class ProphetForecaster:
 
     def get_seasonal_prediction(self, full_df, periods_ahead=0):
         """
-        [P5 sect 3.1] Get Prophet prediction for given timestamps.
-        Returns the seasonal component hat_lambda_P for residual calculation.
+        Get Prophet prediction for given timestamps.
+        Returns the seasonal component for residual calculation.
         """
         if not self._trained:
             raise RuntimeError("Prophet model not trained.")
@@ -96,8 +70,7 @@ class ProphetForecaster:
 
     def compute_residuals(self, df):
         """
-        [P5 sect 3.1] r_t = lambda_t - hat_lambda^(P)_t
-        "LSTM model is used for processing the residuals after seasonality removal"
+        Computes residuals after seasonality removal for further processing.
         """
         prophet_pred = self.get_seasonal_prediction(df)
         actual = df["y"].values

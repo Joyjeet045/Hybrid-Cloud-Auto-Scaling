@@ -1,10 +1,5 @@
 """
 Themis baseline — Hybrid H+V scaling using profiling and cost-optimization.
-
-[P1] Razavi et al. (2024), "A Tale of Two Scales" (Themis), arXiv:2407.14843
-  - sect 5.2: "Themis initially uses in-place vertical scaling to handle 
-    workload surges, then switching to horizontal scaling as needed."
-  - sect 4.3: "Optimizes total cost while satisfying SLO constraints."
 """
 import numpy as np
 from nfg_diagscale.decision.themis_latency import ThemisLatencyModel
@@ -24,7 +19,7 @@ class ThemisBaseline:
 
     def decide(self, state, step):
         """
-        [P1] Choose configuration (H, c) that satisfies SLO and minimizes cost.
+        Choose configuration (H, c) that satisfies SLO and minimizes cost.
         Prioritizes in-place vertical scaling if it satisfies the SLO.
         """
         current_h = state["replicas"]
@@ -32,13 +27,13 @@ class ThemisBaseline:
         actual_rps = state.get("current_rps", 0)
         batch = 1
 
-        # 1. Try vertical scaling first (stay at current replica count) [P1 sect 5.2]
+        # 1. Try vertical scaling first (stay at current replica count)
         best_v_cores = None
         min_v_cost = float("inf")
         
         for cores in range(self.min_cores, self.max_cores + 1):
             lat = self.themis.total_latency(batch, cores, actual_rps, current_h)
-            # [Audit Fix] Robust Themis: use safety margin
+            # Use safety margin for robustness
             if lat <= (self.slo * 0.85):
                 cost = self.scaling_plane.total_cost(current_h, cores, self.ram)
                 # During violations, prioritize safety (more cores) over min cost
@@ -70,23 +65,23 @@ class ThemisBaseline:
                         min_infeasible_lat = lat
                         best_infeasible = (h, c)
         
-        # [Audit fix] If no feasible config found, pick the one that mini-violation
+        # If no feasible config found, pick the one with minimal violation
         if not best_config:
             best_config = best_infeasible
-            h_new, c_new = best_config
-            delta_n = h_new - current_h
-            delta_c = int(c_new - current_c)
+        
+        # Return scaling mode for the selected config
+        h_new, c_new = best_config
+        delta_n = h_new - current_h
+        delta_c = int(c_new - current_c)
+        
+        if delta_n == 0 and delta_c == 0:
+            return {"mode": "none", "delta_c": 0, "delta_n": 0}
+
+        if delta_n != 0 and delta_c != 0:
+            mode = "diagonal"
+        elif delta_n != 0:
+            mode = "horizontal"
+        else:
+            mode = "vertical"
             
-            if delta_n == 0 and delta_c == 0:
-                return {"mode": "none", "delta_c": 0, "delta_n": 0}
-
-            if delta_n != 0 and delta_c != 0:
-                mode = "diagonal"
-            elif delta_n != 0:
-                mode = "horizontal"
-            else:
-                mode = "vertical"
-                
-            return {"mode": mode, "delta_c": delta_c, "delta_n": delta_n}
-
-        return {"mode": "none", "delta_c": 0, "delta_n": 0}
+        return {"mode": mode, "delta_c": delta_c, "delta_n": delta_n}

@@ -1,27 +1,8 @@
 """
 LSTM model for residual correction after Prophet seasonal decomposition.
 
-[P5] Guruge & Priyadarshana (2025), Front. Comput. Sci. 7:1509165, Section 3.1:
-  "The LSTM model is capable of learning from the temporal dependencies
-   within the residuals."
-
-  LSTM gate equations (P5 Equations 2-4):
-    i_t = sigma(omega_i * [h_{t-1}, x_t] + b_i)    (input gate, Eq. 2)
-    f_t = sigma(omega_f * [h_{t-1}, x_t] + b_f)    (forget gate, Eq. 3)
-    o_t = sigma(omega_o * [h_{t-1}, x_t] + b_o)    (output gate, Eq. 4)
-
-  [P5 Table 2] LSTM configuration:
-    Layers = 2 LSTM, 1 dense
-    Hidden units = 50
-    Loss function = MSE
-    Early stopping = 5
-    Epochs = 50
-    Batch size = 16
-    Optimizer = Adam
-    Learning rate = 0.001
-
-  [P5 sect 3.1.4] Time complexity (Eq. 6):
-    O(T * n * m) where T=sequence length, n=input features, m=hidden units
+The LSTM model is capable of learning from the temporal dependencies
+within the residuals.
 """
 import numpy as np
 import os
@@ -53,25 +34,24 @@ class LSTMResidualModel:
 
     def _build_model(self):
         """
-        [P5 Table 2] "2 LSTM, 1 dense" with 50 hidden units per layer.
-        [P5 Eq. 2-4] Each LSTM layer implements input, forget, output gates.
+        Build the model with 50 hidden units per layer.
         """
         model = Sequential()
 
-        # [P5 Table 2] First LSTM layer with return_sequences for stacking
+        # First LSTM layer with return_sequences for stacking
         model.add(LSTM(
             self.n_units,
             return_sequences=True,
             input_shape=(self.lookback, 1)
         ))
 
-        # [P5 Table 2] Second LSTM layer
+        # Second LSTM layer
         model.add(LSTM(self.n_units, return_sequences=False))
 
-        # [P5 Table 2] Dense output layer
+        # Dense output layer
         model.add(Dense(1))
 
-        # [P5 Table 2] Adam optimizer with lr=0.001, MSE loss
+        # Adam optimizer with lr=0.001, MSE loss
         optimizer = Adam(learning_rate=self.lr)
         model.compile(optimizer=optimizer, loss=self.loss)
         return model
@@ -86,8 +66,7 @@ class LSTMResidualModel:
 
     def train(self, residuals):
         """
-        [P5 sect 3.1] Train LSTM on residuals r_t = lambda_t - hat_lambda^(P)_t
-        [P5 Table 2] All hyperparameters from paper configuration.
+        Train LSTM on residuals.
         """
         residuals = np.array(residuals).reshape(-1, 1)
         scaled = self.scaler.fit_transform(residuals)
@@ -98,10 +77,7 @@ class LSTMResidualModel:
                 f"Not enough data for LSTM. Need > {self.lookback} points, got {len(residuals)}"
             )
 
-        # [P5 sect 3.1] Reshape for LSTM: [samples, timesteps, features]
-        X = X.reshape(X.shape[0], X.shape[1], 1)
-
-        # [P5 Table 2] Early stopping with patience=5
+        # Early stopping
         early_stop = EarlyStopping(
             monitor="val_loss",
             patience=self.patience,
@@ -110,7 +86,7 @@ class LSTMResidualModel:
 
         self.model = self._build_model()
 
-        # [P5 sect 4.2] Validation split from training data
+        # Validation split from training data
         self.model.fit(
             X, y,
             epochs=self.epochs,
@@ -124,7 +100,6 @@ class LSTMResidualModel:
 
     def predict(self, recent_residuals):
         """
-        [P5 sect 3.1] hat_r_{t+k} = LSTM([r_{t-tau}, ..., r_t]; Theta_LSTM)
         Predict the next residual value given the recent residual window.
         """
         if not self._trained:

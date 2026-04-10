@@ -1,16 +1,6 @@
 """
 Kubernetes Horizontal Pod Autoscaler (HPA) baseline.
 
-[P4] Solino et al. (2025), UCC'25, sect 5 (Related Work):
-  "Kubernetes HPA reacts to CPU or memory thresholds at the
-   container level, thus overlooking any internal application metrics
-   and leading to delayed or excessive scaling."
-
-[P5] Guruge & Priyadarshana (2025), sect 3.2.1:
-  "HPA... controls how many pods must be deployed in the cluster.
-   Autoscaling adjust the desired pod count in RS to execute
-   scale-up/down commands."
-
 Standard HPA formula (Kubernetes docs):
   desiredReplicas = ceil(currentReplicas * (currentMetricValue / desiredMetricValue))
 """

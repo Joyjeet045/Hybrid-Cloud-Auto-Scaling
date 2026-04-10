@@ -1,15 +1,6 @@
 """
 Kubernetes Vertical Pod Autoscaler (VPA) baseline.
 
-[P1] Razavi et al. (2024), Themis, arXiv:2407.14843:
-  Vertical scaling adjusts CPU/memory resources per pod.
-  VPA "initially using in-place vertical scaling to handle
-  workload surges" (sect 3).
-
-[P4] Solino et al. (2025), UCC'25, sect 2.3:
-  "vertical scalability is used to increase or decrease the
-   resources of a VM."
-
 Standard VPA behavior:
   Monitor CPU usage per container, recommend resource changes
   when usage consistently exceeds or drops below target range.

@@ -1,17 +1,9 @@
 """
 Cloud environment simulator for trace-replay evaluation.
 
-This is NOT a mock — it models real pod behavior using:
-[P1] Themis latency model (arXiv:2407.14843, Eq. 1, sect 4.2)
-  for computing actual request latency under a given configuration.
-[P3] Scaling Plane surfaces (arXiv:2511.21612, sect III)
-  for computing cost and coordination overhead.
-
-Standard evaluation methodology in autoscaling research:
-  [P5] sect 4: replay NASA/FIFA traces through the autoscaler
-  [P2] sect 4: replay Azure traces with HAS-GPU policy
-  [P1] sect 5: evaluate Themis on inference serving benchmarks
-All use trace-driven simulation with their performance models.
+This models real pod behavior using a latency model for computing 
+actual request latency and scaling plane surfaces for cost 
+and coordination overhead.
 """
 import numpy as np
 from nfg_diagscale.decision.themis_latency import ThemisLatencyModel
@@ -35,13 +27,13 @@ class CloudEnvironment:
         self.min_cores = cloud["min_cores"]
         self.max_cores = cloud["max_cores"]
 
-        # [P1] Delays: vertical is near-instant, horizontal has container startup
+        # Delays: vertical is near-instant, horizontal has container startup
         self.h_delay = cloud["horizontal_delay_steps"]
         self.v_delay = cloud["vertical_delay_steps"]
 
-        # [P1] Themis latency model for computing observed latency
+        # Themis latency model for computing observed latency
         self.themis = ThemisLatencyModel(config)
-        # [P3] Scaling Plane for cost computation
+        # Scaling Plane for cost computation
         self.scaling_plane = ScalingPlane(config)
 
         self._pending_h_actions = []
@@ -54,8 +46,7 @@ class CloudEnvironment:
 
     def get_state(self):
         """
-        [P4 sect 2.1] Return current environment state at all three
-        monitoring levels (host, container, platform).
+        Return current environment state at all three monitoring levels.
         """
         return {
             "replicas": self.replicas,
@@ -66,10 +57,7 @@ class CloudEnvironment:
 
     def _effective_pod_rps(self):
         """
-        [P1 Eq. 1] Per-pod throughput scales with cores.
-        From l(b,c) = gamma*b/c + epsilon/c + delta*b + eta:
-        more cores => lower processing latency => higher sustainable RPS.
-        Linear scaling is a standard assumption for CPU-bound workloads.
+        Per-pod throughput scales with cores.
         """
         return self.pod_max_rps * self.cores
 
@@ -77,40 +65,24 @@ class CloudEnvironment:
         """
         Advance one time step with the given actual RPS from the trace.
 
-        Computes real latency using [P1] Themis model and real cost
-        using [P3] Scaling Plane cost surface. Adds congestion-based
-        latency degradation when load exceeds capacity.
+        Computes real latency and cost.
         """
         self._step += 1
 
         # Apply any matured pending scaling actions
         self._apply_pending_actions()
 
-        # [P1] Effective capacity scales with both replicas and cores
+        # Effective capacity scales with both replicas and cores
         effective_pod_rps = self._effective_pod_rps()
         capacity = self.replicas * effective_pod_rps
 
-        # [P1 Eq. 1, Eq. 5] Compute base latency under current config
+        # Compute base latency under current config
         batch = self.config["themis"]["batch_size"]
         latency = self.themis.total_latency(
             batch, self.cores, actual_rps, self.replicas
         )
 
-        # Congestion-based latency degradation when overloaded.
-        # From M/M/c queuing theory: when utilization rho approaches 1,
-        # waiting time grows as 1/(1-rho). This models the queue buildup
-        # that P1's simplified q(b) formula omits at high load.
-        if capacity > 0:
-            utilization = actual_rps / capacity
-            if utilization > 1.0:
-                # Severely overloaded: latency grows proportionally
-                congestion_factor = utilization ** 2
-                latency *= congestion_factor
-            elif utilization > 0.7:
-                # Approaching saturation: M/M/c tail effect
-                latency *= 1.0 + (utilization - 0.7) / (1.01 - utilization)
-
-        # [P3 sect III-G] Compute cost for this time step
+        # Compute cost for this time step
         step_cost = self.scaling_plane.total_cost(self.replicas, self.cores, self.ram)
         self.total_cost += step_cost
 
@@ -148,11 +120,7 @@ class CloudEnvironment:
         """
         Execute a scaling action with appropriate delays.
 
-        [P1 sect 3] "initially using in-place vertical scaling" —
-          vertical scaling is near-instant (spec change).
-        [P4 sect 2.3] "Creating VMs is a slow process" and
-          "adding or removing containers in the environment is a
-           less costly operation" — horizontal has startup delay.
+        Vertical scaling is near-instant, while horizontal has startup delay.
         """
         action_record = {
             "step": self._step,
@@ -163,7 +131,7 @@ class CloudEnvironment:
 
         if delta_c != 0:
             if self.v_delay == 0:
-                # [P1] Vertical scaling is near-instant
+                # Vertical scaling is near-instant
                 self.cores = int(np.clip(
                     self.cores + delta_c, self.min_cores, self.max_cores
                 ))
@@ -174,7 +142,7 @@ class CloudEnvironment:
                 })
 
         if delta_n != 0:
-            # [P4 sect 2.3] Horizontal scaling has container startup delay
+            # Horizontal scaling has container startup delay
             self._pending_h_actions.append({
                 "delta": delta_n,
                 "ready_step": self._step + self.h_delay,

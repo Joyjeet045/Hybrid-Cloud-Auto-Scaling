@@ -1,44 +1,28 @@
 """
 KPI computation for autoscaler evaluation.
-
-Metrics from:
-[P5] Guruge & Priyadarshana (2025), sect 4.2.2:
-  MSE  (Eq. 10): (1/n) * sum(a_i - f_i)^2
-  RMSE (Eq. 11): sqrt(MSE)
-  MAE  (Eq. 12): (1/n) * sum|a_i - f_i|
-  R^2  (Eq. 13): 1 - sum(a_i - f_i)^2 / sum(a_i - f_bar)^2
-
-[P4] Solino et al. (2025), UCC'25, sect 4.1:
-  Reaction Time (Eq. 1): RT = CRD - DFTV
-  Tolerance to Processing Peaks (Eq. 2): TPP = ACR / (ACR + SCR)
-
-NFG-DiagScale KPIs from proposal:
-  SVR  = #{t: L_t > SLO} / T       (SLO Violation Rate)
-  CER  = Cost_baseline / Cost_ours  (Cost Efficiency Ratio)
-  MAPE = (1/T) * sum|actual - pred| / actual  (Forecast MAPE)
 """
 import numpy as np
 
 
 def forecast_mse(actual, predicted):
-    """[P5 Eq. 10] MSE = (1/n) * sum(a_i - f_i)^2"""
+    """Computes Mean Squared Error (MSE)."""
     actual, predicted = np.array(actual), np.array(predicted)
     return np.mean((actual - predicted) ** 2)
 
 
 def forecast_rmse(actual, predicted):
-    """[P5 Eq. 11] RMSE = sqrt(MSE)"""
+    """Computes Root Mean Squared Error (RMSE)."""
     return np.sqrt(forecast_mse(actual, predicted))
 
 
 def forecast_mae(actual, predicted):
-    """[P5 Eq. 12] MAE = (1/n) * sum|a_i - f_i|"""
+    """Computes Mean Absolute Error (MAE)."""
     actual, predicted = np.array(actual), np.array(predicted)
     return np.mean(np.abs(actual - predicted))
 
 
 def forecast_r2(actual, predicted):
-    """[P5 Eq. 13] R^2 = 1 - sum(a_i - f_i)^2 / sum(a_i - a_bar)^2"""
+    """Computes R-squared (R^2)."""
     actual, predicted = np.array(actual), np.array(predicted)
     ss_res = np.sum((actual - predicted) ** 2)
     ss_tot = np.sum((actual - np.mean(actual)) ** 2)
@@ -98,7 +82,6 @@ def rebalance_overhead(action_log):
 
 def reaction_lag(history, slo):
     """
-    [P4 Eq. 1] RT = CRD - DFTV
     Tracking the steps between SLO violation start and scaled resolution.
     Approximate: Average duration of SLO violation streaks.
     """

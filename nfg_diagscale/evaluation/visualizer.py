@@ -40,7 +40,7 @@ def plot_workload_and_predictions(test_df, predictions, save_dir):
     
     ax.set_xlabel("Time Step (minutes)", color='#888888', fontsize=12)
     ax.set_ylabel("Requests Per Minute", color='#888888', fontsize=12)
-    ax.set_title("Workload Forecasting Fidelity [P5]", fontsize=16, fontweight='bold', pad=20)
+    ax.set_title("Workload Forecasting Fidelity", fontsize=16, fontweight='bold', pad=20)
     ax.legend(frameon=True, facecolor='#1e1e1e', edgecolor='#444444')
     ax.grid(True, linestyle='--', alpha=0.2)
     
@@ -126,13 +126,13 @@ def plot_scaling_trajectories(all_results, save_dir):
         ax2.step(t[::step], cores[::step], label=name, color=COLORS[i % len(COLORS)], alpha=0.8, linewidth=1.5, where="post")
 
     ax1.set_ylabel("Replica Count (Horizontal)", color='#888888', fontsize=12)
-    ax1.set_title("Horizontal Scaling Trajectories [P3 Plane]", fontsize=14, fontweight='bold')
+    ax1.set_title("Horizontal Scaling Trajectories", fontsize=14, fontweight='bold')
     ax1.legend(frameon=True, facecolor='#1e1e1e', edgecolor='#444444')
     ax1.grid(True, linestyle='--', alpha=0.1)
     
     ax2.set_xlabel("Evaluation Time Steps", color='#888888', fontsize=12)
     ax2.set_ylabel("CPU Cores (Vertical)", color='#888888', fontsize=12)
-    ax2.set_title("Vertical Resource Trajectories [P1 Themis]", fontsize=14, fontweight='bold')
+    ax2.set_title("Vertical Resource Trajectories", fontsize=14, fontweight='bold')
     ax2.grid(True, linestyle='--', alpha=0.1)
     
     fig.tight_layout()
@@ -166,7 +166,7 @@ def plot_kpi_summary(all_metrics, save_dir):
     # 3. Stability (Rebalance Overhead)
     bars2 = axes[2].bar(names, rebal, color=[COLORS[i % len(COLORS)] for i in range(len(names))], alpha=0.8)
     axes[2].set_ylabel("Rebalance Overhead Score", color='#888888')
-    axes[2].set_title("Operational Stability [P3]", fontsize=14, fontweight='bold')
+    axes[2].set_title("Operational Stability", fontsize=14, fontweight='bold')
     axes[2].tick_params(axis="x", rotation=35)
     axes[2].set_ylim(0, max(5, max(rebal) * 1.2 if rebal else 5))
 
@@ -181,6 +181,43 @@ def plot_kpi_summary(all_metrics, save_dir):
     plt.close(fig)
 
 
+def plot_latency_distribution(all_results, save_dir):
+    """Premium boxplot to show latency distribution and stability."""
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    data = []
+    labels = []
+    colors = []
+    
+    for i, (name, result) in enumerate(all_results.items()):
+        lats = [s["app_latency"] for s in result["history"]]
+        data.append(lats)
+        labels.append(name)
+        colors.append(COLORS[i % len(COLORS)])
+
+    # Premium styling for boxes
+    bp = ax.boxplot(data, labels=labels, patch_artist=True, notch=True, 
+                    showfliers=False, medianprops={'color': 'white', 'linewidth': 2})
+    
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.6)
+        patch.set_edgecolor(color)
+
+    ax.set_ylabel("Response Latency (ms)", color='#888888', fontsize=12)
+    ax.set_title("Statistical Latency Stability", fontsize=16, fontweight='bold', pad=20)
+    ax.grid(True, axis='y', linestyle='--', alpha=0.1)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    
+    # Custom x-axis rotation
+    plt.xticks(rotation=25)
+    
+    fig.tight_layout()
+    fig.savefig(os.path.join(save_dir, "latency_distribution.png"), dpi=200, facecolor=fig.get_facecolor())
+    plt.close(fig)
+
+
 def generate_all_plots(all_results, all_metrics, slo, test_df, predictions, save_dir):
     """Generate all evaluation plots."""
     os.makedirs(save_dir, exist_ok=True)
@@ -189,6 +226,7 @@ def generate_all_plots(all_results, all_metrics, slo, test_df, predictions, save
         plot_workload_and_predictions(test_df, predictions, save_dir)
 
     plot_latency_comparison(all_results, slo, save_dir)
+    plot_latency_distribution(all_results, save_dir)
     plot_cost_comparison(all_results, save_dir)
     plot_scaling_trajectories(all_results, save_dir)
     plot_kpi_summary(all_metrics, save_dir)
