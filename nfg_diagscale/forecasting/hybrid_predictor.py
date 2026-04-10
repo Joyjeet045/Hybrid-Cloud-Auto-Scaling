@@ -37,10 +37,10 @@ class HybridPredictor:
         Phase 1: Train Prophet on raw time series to capture seasonality.
         Phase 2: Compute residuals, train LSTM on residuals.
         """
-        # Cap training data to last 20,000 points for performance
-        # (roughly 14 days of NASA traffic at 1min aggregation - enough for seasonality)
-        if len(train_df) > 20000:
-            train_df = train_df.iloc[-20000:].copy()
+        # Cap training data to last 50,000 points for performance
+        # (roughly 35 days of traffic - enough for seasonality and multiple peak events)
+        if len(train_df) > 50000:
+            train_df = train_df.iloc[-50000:].copy()
 
         print(f"[HybridPredictor] Phase 1: Training Prophet on {len(train_df)} samples...")
         t0 = time.time()
@@ -120,14 +120,12 @@ class HybridPredictor:
             residuals
         ])
 
-        offset = len(self._residual_buffer)
+        # Efficient vectorized LSTM residual prediction
+        lstm_pred_full = self.lstm.predict_batch(all_residuals)
+        
+        # Align with test_df length
         lstm_pred = np.zeros(len(test_df))
-
-        for i in range(len(test_df)):
-            idx = offset + i
-            if idx >= self.lookback:
-                window = all_residuals[idx - self.lookback:idx]
-                lstm_pred[i] = self.lstm.predict(window)
+        lstm_pred[:] = lstm_pred_full[-len(test_df):]
 
         # hat_lambda = hat_lambda^(P) + hat_r
         fused = prophet_pred + lstm_pred

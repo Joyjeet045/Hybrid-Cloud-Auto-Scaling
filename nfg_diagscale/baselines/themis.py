@@ -16,59 +16,62 @@ class ThemisBaseline:
         self.ram = config["cloud"]["ram_gb"]
         self.slo = config["themis"]["slo_ms"]
         self.name = "Themis"
+        self._last_scale_step = -100
+        self.cooldown_steps = 10 
 
     def decide(self, state, step):
         """
         Choose configuration (H, c) that satisfies SLO and minimizes cost.
-        Prioritizes in-place vertical scaling if it satisfies the SLO.
+        Includes cooldown and hysteresis to prevent excessive scaling.
         """
         current_h = state["replicas"]
         current_c = state["cores"]
         actual_rps = state.get("current_rps", 0)
+        current_cost = self.scaling_plane.total_cost(current_h, current_c, self.ram)
         batch = 1
 
-        # 1. Try vertical scaling first (stay at current replica count)
-        best_v_cores = None
-        min_v_cost = float("inf")
-        
-        for cores in range(self.min_cores, self.max_cores + 1):
-            lat = self.themis.total_latency(batch, cores, actual_rps, current_h)
-            # Use safety margin for robustness
-            if lat <= (self.slo * 0.85):
-                cost = self.scaling_plane.total_cost(current_h, cores, self.ram)
-                # During violations, prioritize safety (more cores) over min cost
-                if best_v_cores is None or cores > best_v_cores:
-                    best_v_cores = cores
-        
-        if best_v_cores is not None:
-            delta_c = int(best_v_cores - current_c)
-            # Only return vertical mode if a real change occurs
-            if delta_c != 0:
-                return {"mode": "vertical", "delta_c": delta_c, "delta_n": 0}
+        if step - self._last_scale_step < self.cooldown_steps:
+            return {"mode": "none", "delta_c": 0, "delta_n": 0}
 
-        # 2. If vertical is not enough, search the full (H, V) plane for the cheapest feasible config
-        best_config = None
-        min_cost = float("inf")
-        best_infeasible = None
-        min_infeasible_lat = float("inf")
+        # 1. Evaluate current feasibility
+        current_lat = self.themis.total_latency(batch, current_c, actual_rps, current_h)
+        is_feasible = current_lat <= (self.slo * 0.9)
+
+        # 2. Search for the cheapest feasible config across the full plane
+        best_config = (current_h, current_c)
+        min_cost = current_cost
         
+        found_better = False
         for h in range(self.min_replicas, self.max_replicas + 1):
             for c in range(self.min_cores, self.max_cores + 1):
                 lat = self.themis.total_latency(batch, c, actual_rps, h)
                 if lat <= (self.slo * 0.85):
                     cost = self.scaling_plane.total_cost(h, c, self.ram)
-                    if cost < min_cost:
-                        min_cost = cost
-                        best_config = (h, c)
-                else:
+                    # Hysteresis: only switch if at least 5% cheaper or if current is infeasible
+                    if not is_feasible:
+                        if cost < min_cost:
+                            min_cost = cost
+                            best_config = (h, c)
+                            found_better = True
+                    else:
+                        if cost < (min_cost * 0.95):
+                            min_cost = cost
+                            best_config = (h, c)
+                            found_better = True
+        
+        # 3. If no feasible config found, pick the one with minimal violation
+        if not found_better and not is_feasible:
+            best_infeasible = (current_h, current_c)
+            min_infeasible_lat = current_lat
+            for h in range(self.min_replicas, self.max_replicas + 1):
+                for c in range(self.min_cores, self.max_cores + 1):
+                    lat = self.themis.total_latency(batch, c, actual_rps, h)
                     if lat < min_infeasible_lat:
                         min_infeasible_lat = lat
                         best_infeasible = (h, c)
-        
-        # If no feasible config found, pick the one with minimal violation
-        if not best_config:
             best_config = best_infeasible
-        
+            found_better = True
+
         # Return scaling mode for the selected config
         h_new, c_new = best_config
         delta_n = h_new - current_h
@@ -77,6 +80,7 @@ class ThemisBaseline:
         if delta_n == 0 and delta_c == 0:
             return {"mode": "none", "delta_c": 0, "delta_n": 0}
 
+        self._last_scale_step = step
         if delta_n != 0 and delta_c != 0:
             mode = "diagonal"
         elif delta_n != 0:

@@ -105,8 +105,8 @@ class NFGDiagScaleOrchestrator:
             
             current_capacity = env.replicas * env.cores * self.config["cloud"]["pod_max_rps"]
             predicted_psi = lambda_hat / max(current_capacity, 1.0)
-            
-            proactive_trigger = (predicted_psi > 0.8) or (predicted_psi < 0.4)
+            # Highly proactive trigger: scale up if predicted load > 65% of current capacity
+            proactive_trigger = (predicted_psi > 0.65) or (predicted_psi < 0.4)
 
             if not self.heat_acc.should_trigger() and not proactive_trigger:
                 action_log.append({"step": step, "mode": "none", "delta_c": 0, "delta_n": 0})

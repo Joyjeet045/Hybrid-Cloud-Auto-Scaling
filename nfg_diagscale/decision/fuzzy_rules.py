@@ -109,34 +109,34 @@ def build_rule_base():
             mode="diagonal", delta_c=1, delta_n=1,
             justification="diagonal when both gradients non-zero"
         ),
-        # R3: Critical surge, no vertical room -> horizontal
+        # R3: Critical surge — Maximize both axes for instant relief
         FuzzyRule(
             "R3",
-            {"psi": "critical", "phi": "exhausted"},
-            mode="horizontal", delta_c=0, delta_n=3,
-            justification="switch to horizontal at hardware limit"
+            {"psi": "critical", "phi": "available"},
+            mode="diagonal", delta_c=4, delta_n=5,
+            justification="diagonal-max: heavy load requires instant vertical and planned horizontal boost"
         ),
-        # R4: SLO at risk, tight headroom -> emergency diagonal
+        # R4: SLO at risk, tight headroom -> extreme diagonal
         FuzzyRule(
             "R4",
             {"rho": "risky", "omega": "tight"},
-            mode="diagonal", delta_c=1, delta_n=1,
-            justification="diagonal for dual-axis latency relief"
+            mode="diagonal", delta_c=2, delta_n=2,
+            justification="emergency-diagonal: rapid relief on both axes"
         ),
         # R5: Low demand, ample headroom -> scale down
-        # delta_n is dynamically computed in ANFIS based on overcapacity
+        # Hysteresis: only downscale if load is very low to avoid thrashing
         FuzzyRule(
             "R5",
-            {"psi": "low", "omega": "ample"},
+            {"psi": "low", "omega": "ample", "rho": "safe"},
             mode="vertical", delta_c=-1, delta_n=-1,
-            justification="scale-down proportional to overcapacity"
+            justification="conservative scale-down only when load is definitely low"
         ),
-        # R6: No vertical room, high demand -> horizontal add
+        # R6: Vertical exhausted, high demand -> horizontal add
         FuzzyRule(
             "R6",
             {"psi": "high", "phi": "exhausted"},
-            mode="horizontal", delta_c=0, delta_n=2,
-            justification="horizontal when vertical exhausted and demand is high"
+            mode="diagonal", delta_c=0, delta_n=4,
+            justification="horizontal-burst: maximized replica count when cores are capped"
         ),
     ]
     return rules
