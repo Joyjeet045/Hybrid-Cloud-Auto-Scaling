@@ -27,9 +27,7 @@ class ScalingPlane:
         self.pod_max_rps = config["cloud"]["pod_max_rps"]
 
     def node_latency(self, c, r, b, s):
-        """
-        Computes node-intrinsic latency. L_node(V) = alpha/c + beta/r + gamma/b + delta/s
-        """
+        """Compute node-intrinsic latency."""
         c = max(c, 0.5)
         r = max(r, 0.1)
         b = max(b, 0.01)
@@ -37,17 +35,12 @@ class ScalingPlane:
         return self.alpha / c + self.beta / r + self.gamma_sp / b + self.delta_sp / s
 
     def coordination_latency(self, H):
-        """
-        Computes coordination latency. L_coord(H) = eta * log(H) + mu * H^theta
-        """
+        """Compute coordination latency based on cluster scale H."""
         H = max(H, 1)
         return self.eta_coord * np.log(H) + self.mu_coord * (H ** self.theta)
 
     def total_latency(self, H, c, r, b, s, predicted_rps=0):
-        """
-        Computes total latency: L(H, V) = L_node(V) + L_coord(H)
-        Adds M/M/c queuing congestion based on workload.
-        """
+        """Compute total latency including queuing congestion."""
         base_lat = self.node_latency(c, r, b, s) + self.coordination_latency(H)
         
         # Effective capacity
@@ -75,9 +68,7 @@ class ScalingPlane:
         return H * self.node_cost(c, r) + H * self.cost_per_replica
 
     def objective(self, H, c, r, b, s, slo, predicted_rps=0, alpha_w=0.4, beta_w=0.4, gamma_w=0.2):
-        """
-        Scalarized multi-objective function: F(H, V) = alpha*L + beta*C + gamma*K
-        """
+        """Scalarized objective combining latency and cost."""
         lat = self.total_latency(H, c, r, b, s, predicted_rps)
         cost = self.total_cost(H, c, r)
 

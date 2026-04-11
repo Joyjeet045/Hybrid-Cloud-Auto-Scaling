@@ -1,17 +1,4 @@
-"""
-Hybrid Prophet-LSTM predictor combining seasonal decomposition with
-residual correction.
-
-Fused prediction:
-  hat_lambda_{t+k} = hat_lambda^(P)_{t+k} + hat_r_{t+k}
-
-Where:
-  hat_lambda^(P) = Prophet seasonal prediction
-  hat_r          = LSTM residual correction
-
-Pod count formula:
-  pods_{t+1} = workload_{t+1} / workload_{pod}
-"""
+"""Hybrid Prophet-LSTM predictor."""
 import numpy as np
 import time
 from nfg_diagscale.forecasting.prophet_model import ProphetForecaster
@@ -32,11 +19,7 @@ class HybridPredictor:
         self._trained = False
 
     def train(self, train_df):
-        """
-        Two-phase training:
-        Phase 1: Train Prophet on raw time series to capture seasonality.
-        Phase 2: Compute residuals, train LSTM on residuals.
-        """
+        """Two-phase training: Prophet (seasonality) then LSTM (residuals)."""
         # Cap training data to last 50,000 points for performance
         # (roughly 35 days of traffic - enough for seasonality and multiple peak events)
         if len(train_df) > 50000:
@@ -63,12 +46,7 @@ class HybridPredictor:
         self._trained = True
 
     def predict_next(self, current_rps, current_df_row=None):
-        """
-        Fused prediction:
-          hat_lambda_{t+k} = hat_lambda^(P)_{t+k} + hat_r_{t+k}
-
-        Also update Kalman filter with observed RPS.
-        """
+        """Fused prediction with Kalman update."""
         # Kalman filter update for smoothed current RPS
         lambda_kf = self.kalman.update(current_rps)
 
@@ -134,9 +112,7 @@ class HybridPredictor:
 
     @staticmethod
     def compute_pod_count(predicted_rps, pod_max_rps):
-        """
-        pods_{t+1} = workload_{t+1} / workload_{pod}
-        """
+        """Compute required pods based on workload prediction."""
         if pod_max_rps <= 0:
             return 1
         return max(1, int(np.ceil(predicted_rps / pod_max_rps)))

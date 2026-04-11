@@ -1,19 +1,11 @@
-"""
-NSGA-II Multi-Objective Optimizer on the Diagonal Scaling Plane.
-
-Trajectory Optimizer:
-  Replaces single-step optimization with a T-step trajectory chromosome.
-  Encodes [(H1, c1), (H2, c2), ..., (HT, cT)] to optimize the entire path on the plane.
-"""
+"""NSGA-II Multi-Objective Optimizer for trajectory planning on the Diagonal Scaling Plane."""
 import numpy as np
 from nfg_diagscale.optimizer.scaling_plane import ScalingPlane
 from nfg_diagscale.optimizer.rebalance_penalty import RebalancePenalty
 
 
 class Individual:
-    """
-    Chromosome encodes a complete T-step scaling trajectory.
-    """
+    """Chromosome encoding a T-step scaling trajectory."""
     def __init__(self, trajectory, ram=8, bw=1, s=1000):
         # trajectory is a list of (H, c) tuples for T steps
         self.trajectory = trajectory 
@@ -74,12 +66,7 @@ class NSGA2Optimizer:
         return Individual(trajectory)
 
     def _evaluate(self, ind, current_H, current_cores, predicted_rps, low_load_mode=False):
-        """
-        Cumulative trajectory evaluation.
-        f1: Cumulative infrastructure cost
-        f2: Cumulative SLO violation risk
-        f3: Cumulative rebalance penalty along the path
-        """
+        """Cumulative trajectory evaluation (Cost, SLO risk, Rebalance penalty)."""
         f1_sum = 0.0
         f2_sum = 0.0
         f3_sum = 0.0
@@ -151,7 +138,7 @@ class NSGA2Optimizer:
         return at_least_one_better
 
     def _crowding_distance(self, front):
-        """Diversity preservation."""
+        """Diversity preservation via crowding distance."""
         n = len(front)
         if n <= 2:
             for ind in front: ind.crowding_distance = float("inf")
@@ -207,6 +194,9 @@ class NSGA2Optimizer:
         for ind in pop:
             self._evaluate(ind, current_H, current_cores, predicted_rps)
 
+        prev_best_f1 = float("inf")
+        convergence_count = 0
+
         for gen in range(self.n_gen):
             offspring = []
             while len(offspring) < self.pop_size:
@@ -220,6 +210,18 @@ class NSGA2Optimizer:
 
             combined = pop + offspring[:self.pop_size]
             fronts = self._non_dominated_sort(combined)
+            
+            # Convergence check: stop if best f1 (cost) in Pareto front hasn't shifted
+            best_f1 = min(ind.objectives[0] for ind in fronts[0])
+            if abs(best_f1 - prev_best_f1) < 1e-6:
+                convergence_count += 1
+            else:
+                convergence_count = 0
+                prev_best_f1 = best_f1
+            
+            if convergence_count >= 10: 
+                break
+
             new_pop = []
             for front in fronts:
                 self._crowding_distance(front)

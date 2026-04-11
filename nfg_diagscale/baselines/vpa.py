@@ -10,11 +10,11 @@ import numpy as np
 
 class VPABaseline:
     def __init__(self, config):
-        self.target_cpu_upper = 0.8
+        self.target_cpu_upper = 0.7
         self.target_cpu_lower = 0.3
         self.min_cores = config["cloud"]["min_cores"]
         self.max_cores = config["cloud"]["max_cores"]
-        self.cooldown_steps = 5
+        self.cooldown_steps = 3
         self._last_scale_step = -100
         self.name = "VPA"
 

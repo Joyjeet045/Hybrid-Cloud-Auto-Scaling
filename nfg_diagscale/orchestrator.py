@@ -1,12 +1,4 @@
-"""
-MAPE-K orchestrator implementing the NFG-DiagScale control loop.
-
-MAPE-K operates in four phases in a continuous feedback cycle:
- (1) Monitor: continuously observes the system
- (2) Analyze: evaluates monitored data to determine if adaptation is required
- (3) Plan: builds an action plan
- (4) Execute: applies the planned changes
-"""
+"""MAPE-K orchestrator implementing the NFG-DiagScale control loop."""
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -104,9 +96,9 @@ class NFGDiagScaleOrchestrator:
             lambda_kf = pred["lambda_kf"]
             
             current_capacity = env.replicas * env.cores * self.config["cloud"]["pod_max_rps"]
+            # Proactive trigger: scale up if predicted load > 75% of current capacity
             predicted_psi = lambda_hat / max(current_capacity, 1.0)
-            # Highly proactive trigger: scale up if predicted load > 65% of current capacity
-            proactive_trigger = (predicted_psi > 0.65) or (predicted_psi < 0.4)
+            proactive_trigger = (predicted_psi > 0.75) or (predicted_psi < 0.4)
 
             if not self.heat_acc.should_trigger() and not proactive_trigger:
                 action_log.append({"step": step, "mode": "none", "delta_c": 0, "delta_n": 0})
@@ -199,8 +191,8 @@ class NFGDiagScaleOrchestrator:
                 cost_observed=state["step_cost"],
             )
 
-            # Periodic ANFIS parameter update
-            if step > 0 and step % 60 == 0:
+            # Frequent ANFIS parameter update for faster adaptation
+            if step > 0 and step % 20 == 0:
                 self.anfis.update_parameters()
 
         return env.history, action_log

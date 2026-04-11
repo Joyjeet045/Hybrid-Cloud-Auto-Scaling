@@ -1,10 +1,4 @@
-"""
-Heat-based oscillation suppression.
-
-The concept of heat determines the accumulation of resources to add
-or remove. If the limit is violated, the heat increases/decreases. 
-When no violation occurs, the heat gradually returns to zero.
-"""
+"""Heat-based oscillation suppression."""
 
 
 class HeatAccumulator:
@@ -14,11 +8,7 @@ class HeatAccumulator:
         self._last_violation = "NONE"
 
     def update(self, violation_direction):
-        """
-        Update the heat level based on current violation direction.
-
-        violation_direction: "UP", "DOWN", or "NONE"
-        """
+        """Update heat level based on current violation."""
         if violation_direction == "UP":
             if self.heat <= 0:
                 self.heat = 1
@@ -41,9 +31,7 @@ class HeatAccumulator:
         self._last_violation = violation_direction
 
     def should_trigger(self):
-        """
-        Determine if the heat threshold has been reached to trigger a change.
-        """
+        """Check if change threshold reached."""
         return abs(self.heat) >= self.heat_threshold
 
     def reset(self):

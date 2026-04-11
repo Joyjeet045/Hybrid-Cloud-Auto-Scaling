@@ -20,7 +20,7 @@ FIFA_URL = "https://raw.githubusercontent.com/nimamahmoudi/worldcup98-dataset/ma
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "datasets")
 
-# Apache Common Log Format timestamp pattern
+# Timestamp pattern for log parsing
 LOG_TIMESTAMP_RE = re.compile(r'\[(\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2})')
 
 
@@ -68,7 +68,7 @@ def download_nasa(data_dir=None):
 
     print(f"[Data] Parsed {len(timestamps)} requests total")
 
-    # Aggregate same-minute logs to calculate the HTTP request rate per minute
+    # Aggregate logs
     ts_series = pd.Series(timestamps)
     ts_series = ts_series.dt.floor("min")
     counts = ts_series.value_counts().sort_index()
@@ -112,11 +112,7 @@ def download_fifa(data_dir=None):
 
 
 def load_fifa_from_csv(csv_path):
-    """
-    Load FIFA World Cup 1998 dataset from a user-provided CSV.
-
-    Expected CSV format: columns 'ds' (datetime) and 'y' (request count per minute).
-    """
+    """Load FIFA dataset from a CSV file."""
     df = pd.read_csv(csv_path, parse_dates=["ds"])
     df = df.sort_values("ds").reset_index(drop=True)
     return df
@@ -137,7 +133,7 @@ def generate_synthetic_fifa(n_days=30, seed=42):
     base *= 1 + 0.3 * np.sin(2 * np.pi * t / (7 * 24 * 60))
     # Random noise
     noise = rng.normal(0, 20, n_minutes)
-    # Extreme spikes (match day events)
+    # Synthetic pattern generation
     spikes = np.zeros(n_minutes)
     for _ in range(n_days // 3):
         spike_start = rng.randint(0, n_minutes - 120)

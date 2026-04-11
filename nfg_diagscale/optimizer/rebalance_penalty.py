@@ -13,10 +13,7 @@ class RebalancePenalty:
         self.lambda3 = rcfg["lambda3"]
 
     def compute(self, H_curr, V_curr, H_new, V_new):
-        """
-        Computes rebalance penalty based on configuration changes.
-        V_curr and V_new are tuples/arrays of (c, r, b, s).
-        """
+        """Compute rebalance penalty for configuration changes."""
         # Horizontal transition cost
         h_delta = abs(H_new - H_curr)
 
@@ -34,11 +31,7 @@ class RebalancePenalty:
         return penalty
 
     def _estimate_shard_movement(self, H_old, H_new):
-        """
-        Consistent hashing model: when going from H to H' nodes,
-        approximately (1 - H/H') fraction of shards must move for expansion,
-        or (1 - H'/H) for contraction.
-        """
+        """Estimate shard movement for hashing-based distribution."""
         if H_old == H_new:
             return 0.0
         if H_new > H_old:

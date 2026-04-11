@@ -9,7 +9,7 @@ import numpy as np
 
 class HPABaseline:
     def __init__(self, config):
-        self.target_cpu = 0.7
+        self.target_cpu = 0.6
         self.min_replicas = config["cloud"]["min_replicas"]
         self.max_replicas = config["cloud"]["max_replicas"]
         self.cooldown_steps = 3

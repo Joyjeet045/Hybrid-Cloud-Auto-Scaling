@@ -17,7 +17,7 @@ class ThemisBaseline:
         self.slo = config["themis"]["slo_ms"]
         self.name = "Themis"
         self._last_scale_step = -100
-        self.cooldown_steps = 10 
+        self.cooldown_steps = 3 
 
     def decide(self, state, step):
         """

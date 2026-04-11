@@ -1,14 +1,10 @@
-"""
-Visualization module for autoscaler evaluation results.
-
-Aesthetics: Premium dark theme with research-grade styling.
-"""
+"""Visualization module for evaluation results."""
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
 
-# Set premium aesthetics
+# Style setup
 plt.style.use('dark_background')
 matplotlib.rcParams['font.family'] = 'sans-serif'
 matplotlib.rcParams['font.sans-serif'] = ['Inter', 'Roboto', 'Arial']

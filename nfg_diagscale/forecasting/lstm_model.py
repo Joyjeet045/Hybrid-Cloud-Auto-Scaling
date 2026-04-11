@@ -1,9 +1,4 @@
-"""
-LSTM model for residual correction after Prophet seasonal decomposition.
-
-The LSTM model is capable of learning from the temporal dependencies
-within the residuals.
-"""
+"""LSTM model for residual correction after Prophet seasonal decomposition."""
 import numpy as np
 import os
 
@@ -33,9 +28,7 @@ class LSTMResidualModel:
         self._trained = False
 
     def _build_model(self):
-        """
-        Build the model with 50 hidden units per layer.
-        """
+        """Build the LSTM architecture."""
         model = Sequential()
 
         # First LSTM layer with return_sequences for stacking

@@ -1,14 +1,4 @@
-"""
-Multi-level metrics collector and composite stress signal.
-
-Three monitoring levels:
-  - Host: CPU%, Memory%
-  - Container: per-container CPU, Memory
-  - Platform: internal operation execution time
-
-Composite stress signal:
-  Sigma_stress(t) = w1 * CPU(t)/CPU_max + w2 * L_app(t)/SLO + w3 * Q(t)/Q_max
-"""
+"""Multi-level metrics collector and composite stress signal."""
 import numpy as np
 
 
@@ -23,9 +13,7 @@ class MetricsCollector:
         self.slo = config["themis"]["slo_ms"]
 
     def collect_from_state(self, cloud_state):
-        """
-        Collect metrics at three levels from cloud environment state.
-        """
+        """Collect metrics from current environment state."""
         metrics = {
             # Host level
             "cpu_utilization": cloud_state.get("cpu_utilization", 0.0),
@@ -43,10 +31,7 @@ class MetricsCollector:
         return metrics
 
     def compute_stress(self, metrics):
-        """
-        Composite stress signal.
-        Sigma_stress = w1 * CPU/CPU_max + w2 * L_app/SLO + w3 * Q/Q_max
-        """
+        """Calculate the max stress across any dimension."""
         cpu_frac = min(metrics["cpu_utilization"], 1.0)
         lat_frac = min(metrics["app_latency"] / self.slo, 1.5)
         q_frac = min(metrics["queue_depth"] / self.q_max, 1.5)
@@ -57,10 +42,7 @@ class MetricsCollector:
         return sigma
 
     def detect_violation(self, sigma_stress, upper=0.5, lower=0.4):
-        """
-        Reaction thresholds.
-        Lowered to 0.5 to ensure proactive handling when any metric hits half-capacity.
-        """
+        """Determine transition direction based on stress."""
         if sigma_stress > upper:
             return "UP"
         elif sigma_stress < lower:

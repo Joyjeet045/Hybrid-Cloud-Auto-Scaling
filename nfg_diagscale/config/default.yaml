@@ -1,7 +1,7 @@
 # NFG-DiagScale: Neuro-Fuzzy-Genetic Diagonal Auto-Scaler configuration
 
 dataset:
-  name: "nasa"
+  name: "fifa"
   train_ratio: 0.7
   aggregation_minutes: 1
 
@@ -63,7 +63,7 @@ rebalance:
 anfis:
   num_mfs_per_input: 3
   learning_rate: 0.01
-  alpha_cost_weight: 0.2
+  alpha_cost_weight: 0.8
 
 # NSGA-II optimizer
 nsga2:
@@ -79,8 +79,8 @@ mape_k:
   cycle_seconds: 30
   update_frequency: 30
   history_interval: 120
-  heat_threshold: 1
-  cooldown_steps: 1
+  heat_threshold: 2
+  cooldown_steps: 3
 
 # Cloud environment bounds
 cloud:
@@ -105,4 +105,4 @@ stress:
 # Prediction horizons in minutes
 prediction:
   horizons: [1, 5, 15]
-  primary_horizon: 5
+  primary_horizon: 10

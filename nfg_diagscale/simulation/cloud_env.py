@@ -1,10 +1,4 @@
-"""
-Cloud environment simulator for trace-replay evaluation.
-
-This models real pod behavior using a latency model for computing 
-actual request latency and scaling plane surfaces for cost 
-and coordination overhead.
-"""
+"""Cloud environment simulator for trace-replay evaluation."""
 import numpy as np
 from nfg_diagscale.decision.themis_latency import ThemisLatencyModel
 from nfg_diagscale.optimizer.scaling_plane import ScalingPlane
@@ -45,9 +39,7 @@ class CloudEnvironment:
         self.history = []
 
     def get_state(self):
-        """
-        Return current environment state at all three monitoring levels.
-        """
+        """Return current environment state."""
         return {
             "replicas": self.replicas,
             "cores": self.cores,
@@ -62,11 +54,7 @@ class CloudEnvironment:
         return self.pod_max_rps * self.cores
 
     def step(self, actual_rps):
-        """
-        Advance one time step with the given actual RPS from the trace.
-
-        Computes real latency and cost.
-        """
+        """Advance one time step and compute latency/cost."""
         self._step += 1
 
         # Apply any matured pending scaling actions
@@ -117,11 +105,7 @@ class CloudEnvironment:
         return state
 
     def execute_scaling(self, mode, delta_c, delta_n):
-        """
-        Execute a scaling action with appropriate delays.
-
-        Vertical scaling is near-instant, while horizontal has startup delay.
-        """
+        """Execute a scaling action with configured delays."""
         action_record = {
             "step": self._step,
             "mode": mode,

@@ -1,22 +1,4 @@
-"""
-Adaptive Neuro-Fuzzy Inference System (ANFIS) decision engine.
-
-ANFIS Architecture (5 layers):
-  Layer 1: Fuzzification - Gaussian membership functions
-    mu_i(x) = exp(-(x - c_i)^2 / (2 * sigma_i^2))
-  Layer 2: Rule firing strengths - product of membership values
-    w_i = prod(mu_ij(x_j))
-  Layer 3: Normalized firing strengths
-    w_bar_i = w_i / sum(w_k)
-  Layer 4: Consequent calculation (Takagi-Sugeno first-order)
-    f_i = p_i*x1 + q_i*x2 + r_i
-  Layer 5: Output summation
-    y = sum(w_bar_i * f_i)
-
-Hybrid learning:
-  Forward pass: least-squares estimation of consequent parameters
-  Backward pass: gradient descent on premise (MF) parameters
-"""
+"""Adaptive Neuro-Fuzzy Inference System (ANFIS) decision engine."""
 import numpy as np
 from nfg_diagscale.decision.fuzzy_rules import (
     build_rule_base, gaussian_mf, LINGUISTIC_TERMS, MODE_NAMES,
@@ -65,10 +47,7 @@ class ANFISEngine:
         self._training_buffer = []
 
     def _compute_memberships(self, inputs):
-        """
-        Layer 1: Fuzzification using Gaussian MFs.
-        mu_i(x) = exp(-(x - c_i)^2 / (2 * sigma_i^2))
-        """
+        """Layer 1: Fuzzification using Gaussian MFs."""
         memberships = {}
         for var_name, value in inputs.items():
             if var_name not in self.mf_params:
@@ -105,12 +84,7 @@ class ANFISEngine:
         return strengths / total
 
     def _compute_consequents(self, inputs, n_current, cores_current, predicted_rps):
-        """
-        Layer 4: Consequent calculation.
-        For each rule, compute adaptive output based on Takagi-Sugeno model.
-
-        Scaling magnitudes adapt to current state.
-        """
+        """Layer 4: Consequent calculation (Adaptive Takagi-Sugeno)."""
         # pods_{t+1} = workload_{t+1} / workload_{pod}
         # For SCALE-UP: use effective_pod_rps (cores * base) to find the minimum feasible replicas
         # given current core count. This correctly reflects that vertical scaling reduces H_needed.
@@ -159,12 +133,7 @@ class ANFISEngine:
 
     def decide(self, psi, omega, phi, rho, n_current, cores_current, predicted_rps,
                ga_checkpoint=None):
-        """
-        Layer 5: Weighted output summation.
-        y = sum(w_bar_i * f_i)
-
-        Full ANFIS forward pass producing scaling decision.
-        """
+        """Layer 5: Weighted summation to produce scaling decision."""
         inputs = {"psi": psi, "omega": omega, "phi": phi, "rho": rho}
 
         # Layer 1-3: membership -> firing strengths -> normalization
@@ -236,12 +205,7 @@ class ANFISEngine:
         })
 
     def update_parameters(self):
-        """
-        Hybrid learning: backward pass updates premise
-        parameters (MF centers and sigmas) via gradient descent.
-
-        Loss = sum_t [L_actual - SLO]_+^2 + alpha * Cost_actual
-        """
+        """Hybrid learning: backprop updates membership function parameters."""
         if len(self._training_buffer) < 10:
             return
 
