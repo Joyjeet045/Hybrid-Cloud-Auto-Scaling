@@ -7,17 +7,6 @@ import numpy as np
 class ScalingPlane:
     def __init__(self, config):
         sp = config["scaling_plane"]
-        # Node latency sensitivity constants
-        self.alpha = sp["alpha"]
-        self.beta = sp["beta"]
-        self.gamma_sp = sp["gamma_sp"]
-        self.delta_sp = sp["delta_sp"]
-
-        # Coordination latency parameters
-        self.eta_coord = sp["eta_coord"]
-        self.mu_coord = sp["mu_coord"]
-        self.theta = sp["theta"]
-
         # Cost parameters
         self.cost_per_core = sp["cost_per_core"]
         self.cost_per_gb_ram = sp["cost_per_gb_ram"]
@@ -25,35 +14,6 @@ class ScalingPlane:
 
         # Use pod_max_rps from cloud config for consistency
         self.pod_max_rps = config["cloud"]["pod_max_rps"]
-
-    def node_latency(self, c, r, b, s):
-        """Compute node-intrinsic latency."""
-        c = max(c, 0.5)
-        r = max(r, 0.1)
-        b = max(b, 0.01)
-        s = max(s, 1.0)
-        return self.alpha / c + self.beta / r + self.gamma_sp / b + self.delta_sp / s
-
-    def coordination_latency(self, H):
-        """Compute coordination latency based on cluster scale H."""
-        H = max(H, 1)
-        return self.eta_coord * np.log(H) + self.mu_coord * (H ** self.theta)
-
-    def total_latency(self, H, c, r, b, s, predicted_rps=0):
-        """Compute total latency including queuing congestion."""
-        base_lat = self.node_latency(c, r, b, s) + self.coordination_latency(H)
-        
-        # Effective capacity
-        capacity = H * c * self.pod_max_rps
-        
-        if capacity > 0 and predicted_rps > 0:
-            utilization = predicted_rps / capacity
-            if utilization > 1.0:
-                base_lat *= (utilization ** 2)
-            elif utilization > 0.7:
-                base_lat *= 1.0 + (utilization - 0.7) / (1.01 - utilization)
-                
-        return base_lat
 
     def node_cost(self, c, r):
         """
@@ -66,42 +26,3 @@ class ScalingPlane:
         Computes total monetary cost.
         """
         return H * self.node_cost(c, r) + H * self.cost_per_replica
-
-    def objective(self, H, c, r, b, s, slo, predicted_rps=0, alpha_w=0.4, beta_w=0.4, gamma_w=0.2):
-        """Scalarized objective combining latency and cost."""
-        lat = self.total_latency(H, c, r, b, s, predicted_rps)
-        cost = self.total_cost(H, c, r)
-
-        # Normalize latency by SLO
-        lat_norm = lat / slo
-        cost_norm = cost
-
-        return alpha_w * lat_norm + beta_w * cost_norm + gamma_w * lat_norm * cost_norm
-
-    def is_feasible(self, H, c, r, b, s, slo, predicted_rps=0, min_throughput=0):
-        """
-        Checks if configuration satisfies SLO constraints.
-        """
-        lat = self.total_latency(H, c, r, b, s, predicted_rps)
-        return lat <= slo
-
-    def gradient_direction(self, H, c, r, b, s, slo, predicted_rps=0, delta_h=1, delta_c=1):
-        """
-        Computes numerical gradient of objective function to determine direction.
-        """
-        F_curr = self.objective(H, c, r, b, s, slo, predicted_rps)
-        F_dh = self.objective(H + delta_h, c, r, b, s, slo, predicted_rps)
-        F_dc = self.objective(H, c + delta_c, r, b, s, slo, predicted_rps)
-
-        dF_dH = F_dh - F_curr
-        dF_dV = F_dc - F_curr
-
-        # Optimal scaling direction based on gradient components
-        if abs(dF_dH) > 1e-8 and abs(dF_dV) > 1e-8:
-            return "diagonal", dF_dH, dF_dV
-        elif abs(dF_dH) > 1e-8:
-            return "horizontal", dF_dH, dF_dV
-        elif abs(dF_dV) > 1e-8:
-            return "vertical", dF_dH, dF_dV
-        else:
-            return "stable", dF_dH, dF_dV

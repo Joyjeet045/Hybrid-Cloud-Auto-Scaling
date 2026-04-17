@@ -35,7 +35,7 @@ def plot_workload_and_predictions(test_df, predictions, save_dir):
     ax.plot(t, predictions[:n], label="Prophet-LSTM Hybrid Predicted", color=COLORS[0], alpha=0.9, linewidth=1.2)
     
     ax.set_xlabel("Time Step (minutes)", color='#888888', fontsize=12)
-    ax.set_ylabel("Requests Per Minute", color='#888888', fontsize=12)
+    ax.set_ylabel("Requests Per Second (RPS)", color='#888888', fontsize=12)
     ax.set_title("Workload Forecasting Fidelity", fontsize=16, fontweight='bold', pad=20)
     ax.legend(frameon=True, facecolor='#1e1e1e', edgecolor='#444444')
     ax.grid(True, linestyle='--', alpha=0.2)

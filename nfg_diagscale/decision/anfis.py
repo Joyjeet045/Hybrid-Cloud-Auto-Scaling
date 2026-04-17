@@ -19,6 +19,18 @@ class ANFISEngine:
         self.min_replicas = config["cloud"]["min_replicas"]
         self.min_cores = config["cloud"]["min_cores"]
 
+        # GA checkpoint influence weight (1 - this = ANFIS weight)
+        self._ga_influence = acfg.get("ga_influence_weight", 0.3)
+
+        # Adaptive deadzone widths by load regime
+        self._dz_low = acfg.get("deadzone_low", 0.2)
+        self._dz_moderate = acfg.get("deadzone_moderate", 0.35)
+        self._dz_near_cap = acfg.get("deadzone_near_capacity", 0.5)
+        self._dz_over_cap = acfg.get("deadzone_over_capacity", 0.15)
+
+        # Cost normalization factor for online learning
+        self._cost_norm = acfg.get("cost_normalization", 0.02)
+
         self.rules = build_rule_base()
 
         # Premise parameters: centers and sigmas for each MF
@@ -85,15 +97,6 @@ class ANFISEngine:
 
     def _compute_consequents(self, inputs, n_current, cores_current, predicted_rps):
         """Layer 4: Consequent calculation (Adaptive Takagi-Sugeno)."""
-        # pods_{t+1} = workload_{t+1} / workload_{pod}
-        # For SCALE-UP: use effective_pod_rps (cores * base) to find the minimum feasible replicas
-        # given current core count. This correctly reflects that vertical scaling reduces H_needed.
-        effective_pod_rps = self.pod_max_rps * cores_current
-        n_target_up = max(1, int(np.ceil(predicted_rps / effective_pod_rps)))
-
-        # For SCALE-DOWN: use effective_pod_rps to correctly release pods when cores are high.
-        n_target_down = max(1, int(np.ceil(predicted_rps / effective_pod_rps)))
-
         consequent_outputs = []
         for rule in self.rules:
             cp = self.consequent_params[rule.rule_id]
@@ -102,27 +105,14 @@ class ANFISEngine:
             omega = inputs.get("omega", 0.5)
             phi = inputs.get("phi", 0.5)
 
-            # f_i = p_i*psi + q_i*omega + r_i*phi + s_i (first-order Sugeno)
+            # True Takagi-Sugeno First Order Consequents:
+            # f_i = s_i + p_i*psi + q_i*omega + r_i*phi
             mode_raw = cp["s_mode"] + cp["p"] * psi + cp["q"] * omega
-            dc_raw = cp["s_dc"] + cp["r"] * phi
-            dn_raw = cp["s_dn"]
-
-            # Adapt horizontal delta based on pod count gap
-            if rule.mode == SCALING_MODES["horizontal"]:
-                dn_raw = float(n_target_up - n_current)
-            elif rule.mode == SCALING_MODES["diagonal"]:
-                # Diagonal: split between V and H
-                dn_raw = max(1.0, float(np.ceil(psi / 2.0)))
-
-            # Scale-down rules: use full surplus to aggressively save costs.
-            # Maximize cost savings when Psi is low and headroom is ample
-            if rule.delta_n < 0:
-                # Release all pods that are not required for current predicted RPS
-                surplus = n_current - n_target_down
-                if surplus > 0:
-                    dn_raw = float(-surplus) # Scale down to the bare minimum required
-                else:
-                    dn_raw = 0.0
+            
+            # The learned adjustments (p, q, r) steer BOTH vertical and horizontal decisions 
+            # away from the base rule constants to fix prediction errors
+            dc_raw = cp["s_dc"] + cp["r"] * phi + cp["p"] * psi
+            dn_raw = cp["s_dn"] + cp["q"] * omega + cp["p"] * psi
 
             consequent_outputs.append({
                 "mode": np.clip(mode_raw, 0, 2),
@@ -151,23 +141,32 @@ class ANFISEngine:
         # Constrain toward NSGA-II Pareto checkpoint if available
         if ga_checkpoint is not None:
             h_star, c_star = ga_checkpoint
-            # Gentle nudge toward GA target — only 10% influence to
-            # prevent over-provisioning bias from Pareto exploration
-            dn_val = 0.9 * dn_val + 0.1 * (h_star - n_current)
-            dc_val = 0.9 * dc_val + 0.1 * (c_star - cores_current)
+            anfis_weight = 1.0 - self._ga_influence
+            dn_val = anfis_weight * dn_val + self._ga_influence * (h_star - n_current)
+            dc_val = anfis_weight * dc_val + self._ga_influence * (c_star - cores_current)
 
-        # Apply Adaptive Deadzone to prevent micro-oscillations (Stability vs Cost)
-        # Suppress changes to avoid jitter, especially at low loads
-        # Increase stability threshold when load is safe (psi < 1.1)
-        dz_n = 0.5 if psi < 1.1 else 0.15
-        dz_c = 0.5 if psi < 1.1 else 0.15
+        # Apply Adaptive Deadzone to prevent micro-oscillations.
+        # Deadzone width scales with load: aggressive scale-down at low load,
+        # responsive at high load, conservative near capacity.
+        if psi < 0.5:
+            dz_n = self._dz_low
+            dz_c = self._dz_low
+        elif psi < 0.8:
+            dz_n = self._dz_moderate
+            dz_c = self._dz_moderate
+        elif psi < 1.1:
+            dz_n = self._dz_near_cap
+            dz_c = self._dz_near_cap
+        else:
+            dz_n = self._dz_over_cap
+            dz_c = self._dz_over_cap
         
         if abs(dn_val) < dz_n: dn_val = 0.0
         if abs(dc_val) < dz_c: dc_val = 0.0
 
-        # Discretize and clip deltas
-        delta_c = int(np.clip(round(dc_val), -2, 4))
-        delta_n = int(np.clip(round(dn_val), -3, 10))
+        # Discretize deltas natively based purely on defuzzification result
+        delta_c = int(round(dc_val))
+        delta_n = int(round(dn_val))
 
         # Enforce bounds FIRST before setting mode
         new_cores = np.clip(cores_current + delta_c, self.min_cores, self.max_cores)
@@ -205,16 +204,22 @@ class ANFISEngine:
         })
 
     def update_parameters(self):
-        """Hybrid learning: backprop updates membership function parameters."""
+        """
+        Hybrid learning: two-phase ANFIS update (Jang 1993).
+        Phase 1 (backprop): Updates premise MF params (center, sigma).
+        Phase 2 (consequent): Updates first-order Sugeno params (p, q, r)
+                               using gradient descent on input-loss correlations.
+        """
         if len(self._training_buffer) < 10:
             return
 
-        for record in self._training_buffer[-50:]:
+        recent = self._training_buffer[-50:]
+
+        # ── Phase 1: Premise parameter update (backprop on MF centers/sigmas) ──
+        for record in recent:
             lat = record["latency"]
             cost = record["cost"]
 
-            # L = (L-SLO)^2 + alpha_cost * Cost
-            # We use raw differences as specified; stability is handled by gradient clipping below.
             slo_loss = max(0.0, lat - self.slo) ** 2
             total_loss = slo_loss + self.alpha_cost * cost
 
@@ -222,7 +227,6 @@ class ANFISEngine:
                 continue
 
             inputs = record["inputs"]
-            # Gradient descent on premise parameters
             for var_name, value in inputs.items():
                 if var_name not in self.mf_params:
                     continue
@@ -234,17 +238,61 @@ class ANFISEngine:
                     if mu < 1e-8:
                         continue
 
-                    # d(loss)/d(center) via chain rule
                     d_mu_dc = mu * (value - c) / (s ** 2 + 1e-8)
-                    # d(loss)/d(sigma)
                     d_mu_ds = mu * ((value - c) ** 2) / (s ** 3 + 1e-8)
 
-                    # Gradient clipping for stability
-                    grad_scale = total_loss * 0.001 # Reduced scale
+                    grad_scale = total_loss * 0.001
                     gc = np.clip(grad_scale * d_mu_dc, -1.0, 1.0)
                     gs = np.clip(grad_scale * d_mu_ds, -1.0, 1.0)
 
                     mf_p["center"] -= self.lr * gc
                     mf_p["sigma"] = np.clip(mf_p["sigma"] - self.lr * gs, 0.05, 5.0)
+
+        # ── Phase 2: Consequent parameter update (first-order Sugeno terms) ──
+        # Update p, q, r using simplified gradient descent on the loss:
+        # The consequent for each rule contributes f_k = p*psi + q*omega + r*phi + s.
+        # df/dp = psi, df/dq = omega, df/dr = phi  (partial derivatives).
+        # We update in the direction that reduces SLO-cost loss.
+        for record in recent:
+            lat = record["latency"]
+            # To match Phase 1 logic, we only penalize when lat > slo
+            lat_error = max(0.0, lat - self.slo) / max(self.slo, 1.0)
+            
+            # Normalized cost error using configurable normalization factor
+            cost_error = self.alpha_cost * (record["cost"] * self._cost_norm) 
+
+            inputs = record["inputs"]
+            psi_val = inputs.get("psi", 1.0)
+            omega_val = inputs.get("omega", 0.5)
+            phi_val = inputs.get("phi", 0.5)
+
+            # Compute firing strengths to weight each rule's contribution
+            strengths = self._compute_firing_strengths(inputs)
+            w_bar = self._normalize_strengths(strengths)
+
+            for idx, rule in enumerate(self.rules):
+                if w_bar[idx] < 1e-6:
+                    continue  # This rule barely fires — skip update
+
+                cp = self.consequent_params[rule.rule_id]
+                # Scale update by rule's firing weight (more active rules learn faster)
+                lr_scaled = self.lr * 0.1 * w_bar[idx]
+
+                # Gradient: reduce latency error by adjusting consequent params
+                # If lat_error > 0, we must strongly increase resources.
+                # If lat_error == 0, we slowly decrease resources to save cost.
+                if lat_error > 0:
+                    grad_signal = cost_error - 5.0 * lat_error
+                else:
+                    grad_signal = cost_error
+
+                cp["p"] -= lr_scaled * np.clip(grad_signal * psi_val, -1.0, 1.0)
+                cp["q"] -= lr_scaled * np.clip(grad_signal * omega_val, -1.0, 1.0)
+                cp["r"] -= lr_scaled * np.clip(grad_signal * phi_val, -1.0, 1.0)
+
+                # Clip consequent params to prevent divergence
+                cp["p"] = np.clip(cp["p"], -2.0, 2.0)
+                cp["q"] = np.clip(cp["q"], -2.0, 2.0)
+                cp["r"] = np.clip(cp["r"], -2.0, 2.0)
 
         self._training_buffer = self._training_buffer[-100:]

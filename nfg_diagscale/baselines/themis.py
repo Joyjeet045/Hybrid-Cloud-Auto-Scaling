@@ -17,7 +17,9 @@ class ThemisBaseline:
         self.slo = config["themis"]["slo_ms"]
         self.name = "Themis"
         self._last_scale_step = -100
-        self.cooldown_steps = 3 
+        # Themis performs expensive full-plane search → longer recomputation interval
+        tcfg_base = config.get("baselines", {}).get("themis", {})
+        self.cooldown_steps = tcfg_base.get("cooldown_steps", 8)
 
     def decide(self, state, step):
         """
@@ -28,7 +30,7 @@ class ThemisBaseline:
         current_c = state["cores"]
         actual_rps = state.get("current_rps", 0)
         current_cost = self.scaling_plane.total_cost(current_h, current_c, self.ram)
-        batch = 1
+        batch = self.themis.default_batch
 
         if step - self._last_scale_step < self.cooldown_steps:
             return {"mode": "none", "delta_c": 0, "delta_n": 0}

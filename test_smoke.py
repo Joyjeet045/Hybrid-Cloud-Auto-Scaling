@@ -33,10 +33,8 @@ print(f"Themis SLO risk (rps=500,n=5) = {risk}")
 
 # Scaling Plane
 sp = ScalingPlane(c)
-nlat = sp.node_latency(4, 8, 1, 1000)
-print(f"ScalingPlane node_latency(c=4) = {nlat:.2f}")
-coord = sp.coordination_latency(3)
-print(f"ScalingPlane coord_latency(H=3) = {coord:.2f}")
+cost = sp.total_cost(4, 8, 8)
+print(f"ScalingPlane total_cost(H=4, c=8) = {cost:.2f}")
 
 # Rebalance Penalty
 rp = RebalancePenalty(c)

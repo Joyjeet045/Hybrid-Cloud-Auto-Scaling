@@ -89,7 +89,6 @@ class CloudEnvironment:
 
         state = {
             "cpu_utilization": cpu_util,
-            "memory_utilization": min(cpu_util * 0.6, 1.0),
             "per_container_cpu": cpu_util,
             "app_latency": latency,
             "queue_depth": self._queue_depth,

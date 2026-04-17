@@ -11,13 +11,15 @@ class MetricsCollector:
         self.w3 = scfg["w3_queue"]
         self.q_max = scfg["q_max"]
         self.slo = config["themis"]["slo_ms"]
+        # Stress thresholds for violation detection
+        self._upper_threshold = scfg.get("upper_threshold", 0.5)
+        self._lower_threshold = scfg.get("lower_threshold", 0.4)
 
     def collect_from_state(self, cloud_state):
         """Collect metrics from current environment state."""
         metrics = {
             # Host level
             "cpu_utilization": cloud_state.get("cpu_utilization", 0.0),
-            "memory_utilization": cloud_state.get("memory_utilization", 0.0),
             # Container level
             "per_container_cpu": cloud_state.get("per_container_cpu", 0.0),
             # Platform level
@@ -31,21 +33,23 @@ class MetricsCollector:
         return metrics
 
     def compute_stress(self, metrics):
-        """Calculate the max stress across any dimension."""
+        """
+        Composite stress signal (Equation 1 in the paper):
+        Σ_stress = w1 * (CPU/CPU_max) + w2 * (L_app/SLO) + w3 * (Q_depth/Q_max)
+        Weighted sum aggregates multi-level telemetry into a single scalar.
+        """
         cpu_frac = min(metrics["cpu_utilization"], 1.0)
         lat_frac = min(metrics["app_latency"] / self.slo, 1.5)
         q_frac = min(metrics["queue_depth"] / self.q_max, 1.5)
 
-        # Use maximum stress across any dimension to trigger symptoms.
-        # This prevents the signal from being dampened by other healthy dimensions.
-        sigma = max(cpu_frac, lat_frac, q_frac)
+        sigma = self.w1 * cpu_frac + self.w2 * lat_frac + self.w3 * q_frac
         return sigma
 
-    def detect_violation(self, sigma_stress, upper=0.5, lower=0.4):
+    def detect_violation(self, sigma_stress):
         """Determine transition direction based on stress."""
-        if sigma_stress > upper:
+        if sigma_stress > self._upper_threshold:
             return "UP"
-        elif sigma_stress < lower:
+        elif sigma_stress < self._lower_threshold:
             return "DOWN"
         else:
             return "NONE"

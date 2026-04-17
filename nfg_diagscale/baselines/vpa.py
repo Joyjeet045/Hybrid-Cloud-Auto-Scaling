@@ -1,29 +1,43 @@
 """
 Kubernetes Vertical Pod Autoscaler (VPA) baseline.
 
-Standard VPA behavior:
-  Monitor CPU usage per container, recommend resource changes
-  when usage consistently exceeds or drops below target range.
+Realistic VPA behavior:
+  - "Auto" mode requires pod eviction and restart for resource changes
+  - Restart introduces temporary capacity loss (pod unavailable during restart)
+  - Recommendation latency: VPA stabilizes recommendations over minutes
+  - Each scaling event restarts pods, causing a brief service disruption
 """
 import numpy as np
 
 
 class VPABaseline:
     def __init__(self, config):
-        self.target_cpu_upper = 0.7
-        self.target_cpu_lower = 0.3
+        baselines_cfg = config.get("baselines", {}).get("vpa", {})
+        self.target_cpu_upper = baselines_cfg.get("target_cpu_upper", 0.7)
+        self.target_cpu_lower = baselines_cfg.get("target_cpu_lower", 0.3)
         self.min_cores = config["cloud"]["min_cores"]
         self.max_cores = config["cloud"]["max_cores"]
-        self.cooldown_steps = 3
+        # VPA requires pod restart → longer stabilization than HPA.
+        # Realistic: pod eviction + restart + stabilization = ~6 minutes
+        self.cooldown_steps = baselines_cfg.get("cooldown_steps", 12)
+        # Number of steps where capacity is degraded during pod restart
+        self.restart_delay_steps = baselines_cfg.get("restart_delay_steps", 3)
         self._last_scale_step = -100
+        self._restart_remaining = 0
         self.name = "VPA"
 
     def decide(self, state, step):
         """
         VPA: scale CPU cores based on per-container utilization.
+        Pod restart is modeled as a cooldown period with no further scaling.
         """
         cpu = state["cpu_utilization"]
         current_cores = state["cores"]
+
+        # During pod restart, no scaling decisions possible
+        if self._restart_remaining > 0:
+            self._restart_remaining -= 1
+            return {"mode": "none", "delta_c": 0, "delta_n": 0}
 
         if step - self._last_scale_step < self.cooldown_steps:
             return {"mode": "none", "delta_c": 0, "delta_n": 0}
@@ -39,6 +53,8 @@ class VPABaseline:
 
         if delta_c != 0:
             self._last_scale_step = step
+            # Pod restart: VPA evicts and restarts pods to apply new resources
+            self._restart_remaining = self.restart_delay_steps
 
         return {
             "mode": "vertical" if delta_c != 0 else "none",

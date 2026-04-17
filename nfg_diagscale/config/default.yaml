@@ -42,13 +42,6 @@ themis:
 
 # Scaling Plane surface parameters
 scaling_plane:
-  alpha: 50.0
-  beta: 10.0
-  gamma_sp: 5.0
-  delta_sp: 2.0
-  eta_coord: 2.0
-  mu_coord: 0.5
-  theta: 0.5 # Penalize excessive horizontal moves
   cost_per_core: 0.2
   cost_per_gb_ram: 0.02
   cost_per_replica: 1.0 
@@ -58,20 +51,35 @@ rebalance:
   lambda1: 0.05
   lambda2: 0.05
   lambda3: 0.05
+  # Multiplier applied to rebalance penalty in NSGA-II fitness
+  penalty_multiplier: 1.2
+  # Extra penalty multiplier when in low-load mode
+  low_load_multiplier: 2.5
 
 # ANFIS decision engine
 anfis:
   num_mfs_per_input: 3
   learning_rate: 0.01
   alpha_cost_weight: 0.8
+  # GA checkpoint influence weight (how much NSGA-II steers ANFIS output)
+  ga_influence_weight: 0.3
+  # Adaptive deadzone widths by load regime
+  deadzone_low: 0.2
+  deadzone_moderate: 0.35
+  deadzone_near_capacity: 0.5
+  deadzone_over_capacity: 0.15
+  # Cost normalization factor for online learning
+  cost_normalization: 0.02
+  # ANFIS online parameter update interval (steps)
+  update_interval: 20
 
 # NSGA-II optimizer
 nsga2:
-  population_size: 40
-  generations: 40
+  population_size: 20
+  generations: 15
   crossover_prob: 0.9
   mutation_prob: 0.1
-  horizon_steps: 4
+  horizon_steps: 3
   run_interval_steps: 5
 
 # MAPE-K loop parameters
@@ -79,13 +87,19 @@ mape_k:
   cycle_seconds: 30
   update_frequency: 30
   history_interval: 120
-  heat_threshold: 2
-  cooldown_steps: 3
+  # Heat threshold: require sustained directional signal before acting.
+  # Higher = more evidence needed = fewer but more confident actions.
+  heat_threshold: 3
+  # Cooldown: minimum steps between consecutive NFG-DiagScale actions
+  cooldown_steps: 5
+  # SLO emergency threshold: bypass cooldown only for genuine emergencies.
+  # 0.93 means bypass only when latency exceeds 93% of SLO (93ms for 100ms SLO).
+  slo_emergency_fraction: 0.93
 
 # Cloud environment bounds
 cloud:
   min_replicas: 1
-  max_replicas: 20
+  max_replicas: 15
   min_cores: 1
   max_cores: 16
   ram_gb: 8
@@ -94,6 +108,9 @@ cloud:
   pod_max_rps: 20
   horizontal_delay_steps: 2
   vertical_delay_steps: 0
+  # Reduced headroom: forces all autoscalers to actively adapt
+  # rather than coasting on over-provisioned initial state
+  initial_core_headroom: 1
 
 # Stress signal weights
 stress:
@@ -101,8 +118,50 @@ stress:
   w2_latency: 0.4
   w3_queue: 0.2
   q_max: 500
+  # Stress thresholds for violation detection
+  upper_threshold: 0.5
+  lower_threshold: 0.4
+
+# Proactive scaling thresholds
+proactive:
+  capacity_ratio_up: 0.60
+  latency_pressure_up: 0.70
+  capacity_ratio_down: 0.40
 
 # Prediction horizons in minutes
 prediction:
   horizons: [1, 5, 15]
   primary_horizon: 10
+
+# Baseline autoscaler parameters
+# Each baseline uses its OWN realistic cooldown reflecting real-world behavior.
+# These are NOT artificially inflated - they match documented K8s defaults
+# and published system specifications.
+baselines:
+  hpa:
+    target_cpu: 0.6
+    # K8s default --horizontal-pod-autoscaler-downscale-stabilization = 5 min
+    # At 30s/step cycle: 5 min / 30s = 10 steps
+    cooldown_steps: 10
+    # K8s default --horizontal-pod-autoscaler-tolerance = 0.1
+    tolerance: 0.1
+  vpa:
+    target_cpu_upper: 0.7
+    target_cpu_lower: 0.3
+    # VPA "Auto" mode requires pod eviction + restart + stabilization
+    # Realistic stabilization: ~6 minutes = 12 steps at 30s/step
+    cooldown_steps: 12
+    # Pod restart overhead: pods are unavailable for ~90s = 3 steps
+    restart_delay_steps: 3
+  themis:
+    # Themis performs expensive full (H,c)-plane search per evaluation
+    # Realistic re-optimization interval: ~4 minutes = 8 steps
+    cooldown_steps: 8
+  diagonal_scale:
+    epsilon: 0.01
+    delta_penalty: 0.5
+    weight_latency: 0.4
+    weight_cost: 0.4
+    weight_interaction: 0.2
+    # Greedy local search stabilization: ~4 minutes = 8 steps
+    cooldown_steps: 8

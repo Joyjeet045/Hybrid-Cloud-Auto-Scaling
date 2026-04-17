@@ -67,7 +67,9 @@ class ThemisLatencyModel:
         if capacity > 0 and arrival_rate > 0:
             utilization = arrival_rate / capacity
             if utilization > 1.0:
-                latency *= (utilization ** 2)
+                # Maintain the vertical asymptote momentum past utilization 1.0
+                penalty_at_border = 1.0 + (1.0 - 0.7) / 0.011
+                latency *= penalty_at_border * (utilization ** 2)
             elif utilization > 0.7:
                 latency *= 1.0 + (utilization - 0.7) / (1.011 - utilization)
                 
@@ -75,10 +77,16 @@ class ThemisLatencyModel:
 
     def slo_risk(self, batch_size, cores, arrival_rate, num_replicas):
         """
-        rho = 1[L_total > SLO]
+        Continuous SLO risk using a sigmoid centered at the SLO threshold.
+        rho = sigmoid(k * (L_total - SLO) / SLO)
+        Returns a value in [0, 1] that smoothly transitions from safe to risky,
+        enabling proper fuzzy reasoning instead of degenerate binary gating.
         """
         lat = self.total_latency(batch_size, cores, arrival_rate, num_replicas)
-        return 1.0 if lat > self.slo else 0.0
+        # Steepness k=10: rho ≈ 0.27 at 90% SLO, 0.5 at SLO, 0.73 at 110% SLO
+        k = 10.0
+        z = k * (lat - self.slo) / max(self.slo, 1e-6)
+        return 1.0 / (1.0 + np.exp(-z))
 
     def latency_headroom(self, batch_size, cores, arrival_rate, num_replicas):
         """

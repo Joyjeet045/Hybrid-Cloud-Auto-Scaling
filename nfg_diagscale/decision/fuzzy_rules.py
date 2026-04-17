@@ -68,27 +68,33 @@ class FuzzyRule:
 def build_rule_base():
     """
     Construct the fuzzy rule base.
+    
+    Rules encode the core NFG-DiagScale policy:
+      - Vertical-first: prefer instant core changes to avoid rebalance delay
+      - Diagonal coordination: scale both axes when load demands it
+      - Proactive cost optimization: scale down aggressively when safe
+      - ANFIS online learning fine-tunes these initial consequents
     """
     rules = [
         FuzzyRule(
             "R0",
             {"psi": "moderate", "omega": "ample", "rho": "safe"},
             mode="vertical", delta_c=0, delta_n=0,
-            justification="Stability: hold"
+            justification="Stability: hold when load is moderate with ample headroom"
         ),
         # R1: Moderate surge, tight headroom -> vertical scale-up
         FuzzyRule(
             "R1",
             {"psi": "moderate", "omega": "tight"},
-            mode="vertical", delta_c=1, delta_n=0,
-            justification="vertical-first for moderate surges with SLO pressure"
+            mode="vertical", delta_c=2, delta_n=0,
+            justification="vertical-first: instant core boost for moderate surges with SLO pressure"
         ),
         # R2: High surge, vertical available -> diagonal
         FuzzyRule(
             "R2",
             {"psi": "high", "phi": "available"},
-            mode="diagonal", delta_c=1, delta_n=1,
-            justification="diagonal when both gradients non-zero"
+            mode="diagonal", delta_c=2, delta_n=1,
+            justification="diagonal when both gradients non-zero: vertical-heavy for instant relief"
         ),
         # R3: Critical surge — Maximize both axes for instant relief
         FuzzyRule(
@@ -104,13 +110,13 @@ def build_rule_base():
             mode="diagonal", delta_c=4, delta_n=2,
             justification="emergency-diagonal: extreme vertical boost to bridge horizontal lag"
         ),
-        # R5: Low demand, ample headroom -> scale down
-        # Hysteresis: only downscale if load is very low to avoid thrashing
+        # R5: Low demand, ample headroom -> aggressive vertical scale-down
+        # Vertical-first scale-down: instant, no rebalance cost
         FuzzyRule(
             "R5",
             {"psi": "low", "omega": "ample", "rho": "safe"},
-            mode="vertical", delta_c=-1, delta_n=-1,
-            justification="conservative scale-down only when load is definitely low"
+            mode="vertical", delta_c=-2, delta_n=-1,
+            justification="cost-optimize: aggressive vertical release (instant) with cautious horizontal"
         ),
         # R6: Vertical exhausted, high demand -> horizontal add
         FuzzyRule(
@@ -119,5 +125,14 @@ def build_rule_base():
             mode="diagonal", delta_c=0, delta_n=4,
             justification="horizontal-burst: maximized replica count when cores are capped"
         ),
+        # R7: Low demand, abundant vertical headroom -> horizontal cleanup
+        # When cores are abundant and load is low, we have excess replicas
+        FuzzyRule(
+            "R7",
+            {"psi": "low", "phi": "abundant"},
+            mode="horizontal", delta_c=0, delta_n=-2,
+            justification="replica-shed: remove excess replicas when vertical headroom confirms low load"
+        ),
     ]
     return rules
+

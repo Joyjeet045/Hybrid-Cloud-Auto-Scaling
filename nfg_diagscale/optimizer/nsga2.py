@@ -1,5 +1,6 @@
 """NSGA-II Multi-Objective Optimizer for trajectory planning on the Diagonal Scaling Plane."""
 import numpy as np
+from nfg_diagscale.decision.themis_latency import ThemisLatencyModel
 from nfg_diagscale.optimizer.scaling_plane import ScalingPlane
 from nfg_diagscale.optimizer.rebalance_penalty import RebalancePenalty
 
@@ -40,10 +41,20 @@ class NSGA2Optimizer:
         self.max_H = cloud["max_replicas"]
         self.min_c = cloud["min_cores"]
         self.max_c = cloud["max_cores"]
+        self.ram = cloud["ram_gb"]
+        self.bw = cloud["bandwidth_gbps"]
+        self.storage = cloud["storage_iops"]
 
-        self.scaling_plane = ScalingPlane(config)
+        self.scaling_plane = ScalingPlane(config)  # Used for cost computation only
+        self.themis = ThemisLatencyModel(config)    # Used for latency evaluation (same model as simulator)
         self.rebalance = RebalancePenalty(config)
         self.slo = config["themis"]["slo_ms"]
+        self.batch_size = config["themis"]["batch_size"]
+
+        # Rebalance penalty multipliers from config
+        rebalance_cfg = config.get("rebalance", {})
+        self._penalty_multiplier = rebalance_cfg.get("penalty_multiplier", 1.2)
+        self._low_load_multiplier = rebalance_cfg.get("low_load_multiplier", 2.5)
 
         self.pareto_front = []
 
@@ -53,17 +64,8 @@ class NSGA2Optimizer:
         for _ in range(self.T):
             H = np.random.randint(self.min_H, self.max_H + 1)
             c = np.random.randint(self.min_c, self.max_c + 1)
-            trajectory.append([H, c])
-        return Individual(trajectory, config=self.config)
-
-    def _random_individual_alt(self):
-        # Helper to avoid issues with config passing in Individual __init__
-        trajectory = []
-        for _ in range(self.T):
-            H = np.random.randint(self.min_H, self.max_H + 1)
-            c = np.random.randint(self.min_c, self.max_c + 1)
             trajectory.append([H, float(c)])
-        return Individual(trajectory)
+        return Individual(trajectory, self.ram, self.bw, self.storage)
 
     def _evaluate(self, ind, current_H, current_cores, predicted_rps, low_load_mode=False):
         """Cumulative trajectory evaluation (Cost, SLO risk, Rebalance penalty)."""
@@ -72,28 +74,29 @@ class NSGA2Optimizer:
         f3_sum = 0.0
 
         prev_H = current_H
-        prev_V = (current_cores, 8.0, 1.0, 1000.0) # Simplified V for rebalance computation
+        prev_V = (current_cores, self.ram, self.bw, self.storage) # Simplified V for rebalance computation
 
         for H_step, c_step in ind.trajectory:
             # f1: Cost at this step
-            f1_sum += self.scaling_plane.total_cost(H_step, c_step, 8.0)
+            f1_sum += self.scaling_plane.total_cost(H_step, c_step, self.ram)
 
-            # f2: SLO risk at this step (approximate using predicted RPS)
-            lat = self.scaling_plane.total_latency(
-                H_step, c_step, 8.0, 1.0, 1000.0, predicted_rps
+            # f2: SLO risk at this step using the SAME Themis model
+            # that CloudEnvironment uses for simulation (unified latency surface)
+            lat = self.themis.total_latency(
+                self.batch_size, c_step, predicted_rps, H_step
             )
             f2_sum += max(0, lat - self.slo) / self.slo
 
             # f3: Rebalance penalty for transition to this step
             # Prefer vertical (rebalance=0) over horizontal moves
-            curr_V = (c_step, 8.0, 1.0, 1000.0)
+            curr_V = (c_step, self.ram, self.bw, self.storage)
             rebalance_penalty = self.rebalance.compute(prev_H, prev_V, H_step, curr_V)
             
             # Low-load mode extra penalty
-            if getattr(self, "low_load_mode", False):
-                rebalance_penalty *= 2.5 # Aggressively avoid new pods if possible
+            if low_load_mode:
+                rebalance_penalty *= self._low_load_multiplier
                 
-            f3_sum += rebalance_penalty * 1.2
+            f3_sum += rebalance_penalty * self._penalty_multiplier
 
             prev_H = H_step
             prev_V = curr_V
@@ -189,10 +192,9 @@ class NSGA2Optimizer:
 
     def optimize(self, current_H, current_cores, predicted_rps, low_load_mode=False):
         """Run NSGA-II to find Pareto-optimal trajectories."""
-        self.low_load_mode = low_load_mode
-        pop = [self._random_individual_alt() for _ in range(self.pop_size)]
+        pop = [self._random_individual() for _ in range(self.pop_size)]
         for ind in pop:
-            self._evaluate(ind, current_H, current_cores, predicted_rps)
+            self._evaluate(ind, current_H, current_cores, predicted_rps, low_load_mode)
 
         prev_best_f1 = float("inf")
         convergence_count = 0
@@ -237,19 +239,18 @@ class NSGA2Optimizer:
         return self.pareto_front
 
     def get_nearest_checkpoint(self, current_H, current_c):
-        """Find the immediate next step from the best trajectory."""
+        """Find the cost-optimal feasible next step from the Pareto front."""
         if not self.pareto_front:
             return current_H, current_c
 
-        # Strategy: pick the trajectory with minimum rebalance + cost at step 1
-        best_step_1 = None
-        min_dist = float("inf")
-        
-        for ind in self.pareto_front:
-            h1, c1 = ind.trajectory[0]
-            dist = abs(h1 - current_H) + abs(c1 - current_c)
-            if dist < min_dist:
-                min_dist = dist
-                best_step_1 = (h1, c1)
+        # Strategy: pick the trajectory with min cost among SLO-feasible
+        # solutions. If none are feasible, pick the one with min SLO risk.
+        # This steers the ANFIS toward cost-efficient configurations.
+        feasible = [ind for ind in self.pareto_front if ind.objectives[1] < 0.01]
+        if feasible:
+            best = min(feasible, key=lambda ind: ind.objectives[0])
+        else:
+            best = min(self.pareto_front, key=lambda ind: ind.objectives[1])
 
-        return best_step_1 if best_step_1 else (current_H, current_c)
+        h1, c1 = best.trajectory[0]
+        return (int(h1), int(c1))

@@ -16,8 +16,9 @@ class KalmanFilterRPS:
         # Measurement noise covariance
         self.D = float(kf_cfg["D"])
 
+        self._initial_P = float(kf_cfg["initial_P"])
         self.R_est = 0.0
-        self.P = float(kf_cfg["initial_P"])
+        self.P = self._initial_P
         self._initialized = False
 
     def update(self, R_observed):
@@ -53,5 +54,5 @@ class KalmanFilterRPS:
 
     def reset(self):
         self.R_est = 0.0
-        self.P = 1.0
+        self.P = self._initial_P
         self._initialized = False
