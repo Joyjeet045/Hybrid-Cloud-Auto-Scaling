@@ -215,13 +215,23 @@ class ANFISEngine:
 
         recent = self._training_buffer[-50:]
 
+        # Compute a target cost: the cost of the minimum viable config
+        # that can handle moderate load. Learning only penalizes cost
+        # ABOVE this target, preventing the "always unhappy" ratchet.
+        min_viable_cost = (self.min_replicas *
+                           (self.config["scaling_plane"]["cost_per_core"] * self.min_cores
+                            + self.config["scaling_plane"]["cost_per_gb_ram"] * self.config["cloud"]["ram_gb"]
+                            + self.config["scaling_plane"]["cost_per_replica"]))
+
         # ── Phase 1: Premise parameter update (backprop on MF centers/sigmas) ──
         for record in recent:
             lat = record["latency"]
             cost = record["cost"]
 
             slo_loss = max(0.0, lat - self.slo) ** 2
-            total_loss = slo_loss + self.alpha_cost * cost
+            # Cost loss is only non-zero when ABOVE a reasonable target
+            cost_excess = max(0.0, cost - min_viable_cost)
+            total_loss = slo_loss + self.alpha_cost * cost_excess
 
             if total_loss < 1e-6:
                 continue
@@ -258,8 +268,13 @@ class ANFISEngine:
             # To match Phase 1 logic, we only penalize when lat > slo
             lat_error = max(0.0, lat - self.slo) / max(self.slo, 1.0)
             
-            # Normalized cost error using configurable normalization factor
-            cost_error = self.alpha_cost * (record["cost"] * self._cost_norm) 
+            # Normalized cost error — only penalize cost ABOVE minimum viable
+            cost_excess = max(0.0, record["cost"] - min_viable_cost)
+            cost_error = self.alpha_cost * (cost_excess * self._cost_norm)
+
+            # Skip update entirely when both latency and cost are at targets
+            if lat_error < 1e-6 and cost_error < 1e-6:
+                continue
 
             inputs = record["inputs"]
             psi_val = inputs.get("psi", 1.0)

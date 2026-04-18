@@ -86,21 +86,21 @@ def build_rule_base():
         FuzzyRule(
             "R1",
             {"psi": "moderate", "omega": "tight"},
-            mode="vertical", delta_c=2, delta_n=0,
+            mode="vertical", delta_c=3, delta_n=0,
             justification="vertical-first: instant core boost for moderate surges with SLO pressure"
         ),
         # R2: High surge, vertical available -> diagonal
         FuzzyRule(
             "R2",
             {"psi": "high", "phi": "available"},
-            mode="diagonal", delta_c=2, delta_n=1,
+            mode="diagonal", delta_c=3, delta_n=1,
             justification="diagonal when both gradients non-zero: vertical-heavy for instant relief"
         ),
         # R3: Critical surge — Maximize both axes for instant relief
         FuzzyRule(
             "R3",
             {"psi": "critical", "phi": "available"},
-            mode="diagonal", delta_c=4, delta_n=5,
+            mode="diagonal", delta_c=4, delta_n=3,
             justification="diagonal-max: heavy load requires instant vertical and planned horizontal boost"
         ),
         # R4: SLO at risk, tight headroom -> extreme diagonal
@@ -110,28 +110,35 @@ def build_rule_base():
             mode="diagonal", delta_c=4, delta_n=2,
             justification="emergency-diagonal: extreme vertical boost to bridge horizontal lag"
         ),
-        # R5: Low demand, ample headroom -> aggressive vertical scale-down
+        # R5: Low demand, ample headroom -> aggressive DIAGONAL scale-down
         # Vertical-first scale-down: instant, no rebalance cost
         FuzzyRule(
             "R5",
             {"psi": "low", "omega": "ample", "rho": "safe"},
-            mode="vertical", delta_c=-2, delta_n=-1,
-            justification="cost-optimize: aggressive vertical release (instant) with cautious horizontal"
+            mode="vertical", delta_c=-3, delta_n=-2,
+            justification="cost-optimize: aggressive vertical+horizontal release when load is confirmed low"
         ),
         # R6: Vertical exhausted, high demand -> horizontal add
         FuzzyRule(
             "R6",
             {"psi": "high", "phi": "exhausted"},
-            mode="diagonal", delta_c=0, delta_n=4,
-            justification="horizontal-burst: maximized replica count when cores are capped"
+            mode="horizontal", delta_c=0, delta_n=3,
+            justification="horizontal-burst: add replicas when cores are capped"
         ),
         # R7: Low demand, abundant vertical headroom -> horizontal cleanup
-        # When cores are abundant and load is low, we have excess replicas
         FuzzyRule(
             "R7",
             {"psi": "low", "phi": "abundant"},
-            mode="horizontal", delta_c=0, delta_n=-2,
-            justification="replica-shed: remove excess replicas when vertical headroom confirms low load"
+            mode="horizontal", delta_c=-2, delta_n=-3,
+            justification="replica-shed: aggressively remove excess replicas and cores when load is clearly low"
+        ),
+        # R8: Moderate demand, safe SLO, abundant cores -> cost optimization
+        # This rule fills the gap where load is "fine" but we're over-provisioned
+        FuzzyRule(
+            "R8",
+            {"psi": "moderate", "rho": "safe", "phi": "abundant"},
+            mode="vertical", delta_c=-2, delta_n=-1,
+            justification="cost-trim: reduce over-provisioned resources when current load is easily handled"
         ),
     ]
     return rules

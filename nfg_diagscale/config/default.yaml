@@ -52,7 +52,7 @@ rebalance:
   lambda2: 0.05
   lambda3: 0.05
   # Multiplier applied to rebalance penalty in NSGA-II fitness
-  penalty_multiplier: 1.2
+  penalty_multiplier: 1.5
   # Extra penalty multiplier when in low-load mode
   low_load_multiplier: 2.5
 
@@ -60,18 +60,18 @@ rebalance:
 anfis:
   num_mfs_per_input: 3
   learning_rate: 0.01
-  alpha_cost_weight: 0.8
+  alpha_cost_weight: 1.0
   # GA checkpoint influence weight (how much NSGA-II steers ANFIS output)
-  ga_influence_weight: 0.3
+  ga_influence_weight: 0.45
   # Adaptive deadzone widths by load regime
-  deadzone_low: 0.2
-  deadzone_moderate: 0.35
-  deadzone_near_capacity: 0.5
+  deadzone_low: 0.25
+  deadzone_moderate: 0.40
+  deadzone_near_capacity: 0.55
   deadzone_over_capacity: 0.15
   # Cost normalization factor for online learning
   cost_normalization: 0.02
   # ANFIS online parameter update interval (steps)
-  update_interval: 20
+  update_interval: 10
 
 # NSGA-II optimizer
 nsga2:
@@ -91,10 +91,10 @@ mape_k:
   # Higher = more evidence needed = fewer but more confident actions.
   heat_threshold: 3
   # Cooldown: minimum steps between consecutive NFG-DiagScale actions
-  cooldown_steps: 5
+  cooldown_steps: 3
   # SLO emergency threshold: bypass cooldown only for genuine emergencies.
-  # 0.93 means bypass only when latency exceeds 93% of SLO (93ms for 100ms SLO).
-  slo_emergency_fraction: 0.93
+  # 0.90 means bypass only when latency exceeds 90% of SLO (90ms for 100ms SLO).
+  slo_emergency_fraction: 0.90
 
 # Cloud environment bounds
 cloud:
@@ -124,9 +124,9 @@ stress:
 
 # Proactive scaling thresholds
 proactive:
-  capacity_ratio_up: 0.60
-  latency_pressure_up: 0.70
-  capacity_ratio_down: 0.40
+  capacity_ratio_up: 0.70
+  latency_pressure_up: 0.75
+  capacity_ratio_down: 0.35
 
 # Prediction horizons in minutes
 prediction:
