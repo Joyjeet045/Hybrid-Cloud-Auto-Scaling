@@ -4,7 +4,7 @@ Kubernetes Vertical Pod Autoscaler (VPA) baseline.
 Realistic VPA behavior:
   - "Auto" mode requires pod eviction and restart for resource changes
   - Restart introduces temporary capacity loss (pod unavailable during restart)
-  - Recommendation latency: VPA stabilizes recommendations over minutes
+  - Core changes are deferred until pod restoration (not instant)
   - Each scaling event restarts pods, causing a brief service disruption
 """
 import numpy as np
@@ -27,13 +27,16 @@ class VPABaseline:
         self._restart_remaining = 0
         # Track pod eviction/restore cycle
         self._pending_restore = False
+        self._pending_delta_c = 0  # Core change deferred until pod restoration
         self.name = "VPA"
 
     def decide(self, state, step):
         """
         VPA: scale CPU cores based on per-container utilization.
         Models realistic pod eviction: when cores change, a pod is evicted
-        (capacity drops), then restored after restart_delay with new resources.
+        first (capacity drops immediately), then restored after restart_delay
+        with new core allocation. Core changes are NOT instant — they only
+        apply when the restarted pod rejoins the pool.
         """
         cpu = state["cpu_utilization"]
         current_cores = state["cores"]
@@ -43,9 +46,11 @@ class VPABaseline:
         if self._restart_remaining > 0:
             self._restart_remaining -= 1
             if self._restart_remaining == 0 and self._pending_restore:
-                # Pod comes back online with new resources
+                # Pod comes back online WITH the deferred core change
                 self._pending_restore = False
-                return {"mode": "horizontal", "delta_c": 0, "delta_n": 1}
+                delta_c = self._pending_delta_c
+                self._pending_delta_c = 0
+                return {"mode": "diagonal", "delta_c": delta_c, "delta_n": 1}
             return {"mode": "none", "delta_c": 0, "delta_n": 0}
 
         if step - self._last_scale_step < self.cooldown_steps:
@@ -64,17 +69,14 @@ class VPABaseline:
             self._last_scale_step = step
             self._restart_remaining = self.restart_delay_steps
 
-            # Model pod eviction: VPA evicts a pod to apply new resources
-            # This temporarily reduces capacity (realistic K8s VPA behavior)
+            # Model pod eviction: evict pod first, defer core change
             if current_replicas > self.min_replicas:
                 self._pending_restore = True
-                return {
-                    "mode": "diagonal",
-                    "delta_c": delta_c,
-                    "delta_n": -1,  # Pod evicted for restart
-                }
+                self._pending_delta_c = delta_c
+                # Evict pod WITHOUT changing cores (old pod removed first)
+                return {"mode": "horizontal", "delta_c": 0, "delta_n": -1}
             else:
-                # Can't evict if at min replicas — just apply core change
+                # At min replicas — can't evict, apply core change directly
                 return {"mode": "vertical", "delta_c": delta_c, "delta_n": 0}
 
         return {"mode": "none", "delta_c": 0, "delta_n": 0}

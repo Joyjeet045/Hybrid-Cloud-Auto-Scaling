@@ -1,13 +1,13 @@
 [
   {
     "name": "NFG-DiagScale",
-    "svr_pct": 0.33333333333333337,
-    "total_cost": 19988.000000000004,
-    "avg_latency_ms": 11.097583273682327,
-    "p99_latency_ms": 47.638493201870055,
-    "scaling_actions": 33,
-    "rebalance_overhead": 81,
-    "reaction_lag_steps": 1.25,
+    "svr_pct": 0.26666666666666666,
+    "total_cost": 20434.24,
+    "avg_latency_ms": 10.367098793971573,
+    "p99_latency_ms": 39.898851294221096,
+    "scaling_actions": 28,
+    "rebalance_overhead": 74,
+    "reaction_lag_steps": 1.0,
     "steps": 1500
   },
   {
@@ -23,13 +23,13 @@
   },
   {
     "name": "VPA",
-    "svr_pct": 0.0,
-    "total_cost": 42756.96,
-    "avg_latency_ms": 21.91100011611914,
+    "svr_pct": 0.13333333333333333,
+    "total_cost": 42804.96,
+    "avg_latency_ms": 22.23761795195672,
     "p99_latency_ms": 28.81952380952381,
     "scaling_actions": 46,
     "rebalance_overhead": 70,
-    "reaction_lag_steps": 0.0,
+    "reaction_lag_steps": 2.0,
     "steps": 1500
   },
   {
