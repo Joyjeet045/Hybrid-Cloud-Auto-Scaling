@@ -126,7 +126,7 @@ stress:
 proactive:
   capacity_ratio_up: 0.70
   latency_pressure_up: 0.75
-  capacity_ratio_down: 0.35
+  capacity_ratio_down: 0.40
 
 # Prediction horizons in minutes
 prediction:

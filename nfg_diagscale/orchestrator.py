@@ -29,9 +29,10 @@ def _compute_initial_state(config, initial_rps):
     # and VPA (vertical-only) has room to scale cores up.
     initial_cores = max(cloud["min_cores"], min(cloud["max_cores"] // 2, 8))
 
-    # Compute replicas needed to handle initial load at ~90% utilization
-    # Tight provisioning forces all autoscalers to actively adapt
-    target_util = 0.90
+    # Compute replicas needed to handle initial load at ~95% utilization.
+    # Tight provisioning forces all autoscalers to actively adapt —
+    # critical for VPA which can't shed excess replicas.
+    target_util = 0.95
     needed_capacity = initial_rps / target_util
     capacity_per_pod = initial_cores * pod_max_rps
     initial_pods = max(1, int(np.ceil(needed_capacity / max(capacity_per_pod, 1))))
@@ -193,7 +194,7 @@ class NFGDiagScaleOrchestrator:
                 # ── DIRECT RIGHT-SIZING (bypasses ANFIS) ──
                 # Find the cheapest (replicas, cores) that handles predicted load
                 # with safety headroom. Vertical-first: start from min replicas.
-                target_util = 0.65
+                target_util = 0.75
                 needed_capacity = lambda_hat / target_util
 
                 # Search for cheapest feasible config (replicas-first ascending)
