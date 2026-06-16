@@ -192,8 +192,14 @@ def plot_latency_distribution(all_results, save_dir):
         colors.append(COLORS[i % len(COLORS)])
 
     # Premium styling for boxes
-    bp = ax.boxplot(data, labels=labels, patch_artist=True, notch=True, 
-                    showfliers=False, medianprops={'color': 'white', 'linewidth': 2})
+    import inspect
+    sig = inspect.signature(ax.boxplot)
+    if 'tick_labels' in sig.parameters:
+        bp = ax.boxplot(data, tick_labels=labels, patch_artist=True, notch=True, 
+                        showfliers=False, medianprops={'color': 'white', 'linewidth': 2})
+    else:
+        bp = ax.boxplot(data, labels=labels, patch_artist=True, notch=True, 
+                        showfliers=False, medianprops={'color': 'white', 'linewidth': 2})
     
     for patch, color in zip(bp['boxes'], colors):
         patch.set_facecolor(color)
