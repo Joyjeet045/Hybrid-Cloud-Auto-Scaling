@@ -1,33 +1,9 @@
-# NFG-DiagScale: Neuro-Fuzzy-Genetic Diagonal Auto-Scaler configuration
+# NFG-DiagScale (HGraphScale environment) controller configuration.
+# Only the keys consumed by the migrated controller remain; the legacy
+# standalone-simulator sections (Prophet/LSTM/Themis/MAPE-K/baselines) were
+# removed along with their modules.
 
-dataset:
-  name: "fifa"
-  train_ratio: 0.7
-  aggregation_minutes: 1
-
-# Prophet model configuration
-prophet:
-  growth: "linear"
-  changepoint_prior_scale: 5.1
-  yearly_seasonality: false
-  weekly_seasonality: 20
-  daily_seasonality: 50
-  seasonality_prior_scale: 30
-
-# LSTM model configuration  
-lstm:
-  layers: 2
-  units: 50
-  dense_output: 1
-  loss: "mse"
-  optimizer: "adam"
-  learning_rate: 0.001
-  epochs: 15
-  batch_size: 1024
-  early_stopping_patience: 3
-  lookback_window: 60
-
-# Kalman filter for RPS estimation
+# Kalman filter for RPS estimation (Kalman 1960)
 kalman:
   A: 1.0
   H: 1.0
@@ -35,43 +11,29 @@ kalman:
   D: 0.1
   initial_P: 1.0
 
-# Themis processing latency
-themis:
-  batch_size: 1
-  slo_ms: 100.0
+# Per-container temporal forecasting (Holt linear trend on Kalman-smoothed load)
+forecast:
+  holt_alpha: 0.5
+  holt_beta: 0.3
 
-# Scaling Plane surface parameters
-scaling_plane:
-  cost_per_core: 0.2
-  cost_per_gb_ram: 0.02
-  cost_per_replica: 1.0 
+# Soft per-request deadline / SLO used by the ANFIS engine (ms). Matches the
+# HGraphScale simulator's request deadline.
+slo_ms: 500.0
 
-# Rebalance penalty weights
+# Rebalance (vertical-preference) penalty weight used in NSGA-II fitness.
 rebalance:
-  lambda1: 0.05
-  lambda2: 0.05
-  lambda3: 0.05
-  # Multiplier applied to rebalance penalty in NSGA-II fitness
+  # Multiplier applied to the rebalance penalty in NSGA-II fitness.
   penalty_multiplier: 1.5
-  # Extra penalty multiplier when in low-load mode
-  low_load_multiplier: 2.5
 
-# ANFIS decision engine
+# ANFIS decision engine (Jang 1993), used in inference mode.
 anfis:
-  num_mfs_per_input: 3
-  learning_rate: 0.01
-  alpha_cost_weight: 1.0
-  # GA checkpoint influence weight (how much NSGA-II steers ANFIS output)
+  # GA checkpoint influence weight (how much NSGA-II steers ANFIS output).
   ga_influence_weight: 0.45
-  # Adaptive deadzone widths by load regime
+  # Adaptive deadzone widths by load regime (fuzzy stability deadzones).
   deadzone_low: 0.25
   deadzone_moderate: 0.40
   deadzone_near_capacity: 0.55
   deadzone_over_capacity: 0.15
-  # Cost normalization factor for online learning
-  cost_normalization: 0.02
-  # ANFIS online parameter update interval (steps)
-  update_interval: 10
 
 # NSGA-II optimizer
 nsga2:
@@ -82,86 +44,24 @@ nsga2:
   horizon_steps: 3
   run_interval_steps: 5
 
-# MAPE-K loop parameters
-mape_k:
-  cycle_seconds: 30
-  update_frequency: 30
-  history_interval: 120
-  # Heat threshold: require sustained directional signal before acting.
-  # Higher = more evidence needed = fewer but more confident actions.
-  heat_threshold: 3
-  # Cooldown: minimum steps between consecutive NFG-DiagScale actions
-  cooldown_steps: 3
-  # SLO emergency threshold: bypass cooldown only for genuine emergencies.
-  # 0.90 means bypass only when latency exceeds 90% of SLO (90ms for 100ms SLO).
-  slo_emergency_fraction: 0.90
-
-# Cloud environment bounds
+# Cloud environment bounds (per-container replica/vCPU limits).
 cloud:
   min_replicas: 1
   max_replicas: 15
   min_cores: 1
   max_cores: 16
-  ram_gb: 8
-  bandwidth_gbps: 1
-  storage_iops: 1000
   pod_max_rps: 20
-  horizontal_delay_steps: 2
-  vertical_delay_steps: 0
-  # Reduced headroom: forces all autoscalers to actively adapt
-  # rather than coasting on over-provisioned initial state
-  initial_core_headroom: 1
+  # Daily cost budget (USD) from the STAR/HGraphScale protocol ($200/day).
+  budget: 200.0
 
-# Stress signal weights
-stress:
-  w1_cpu: 0.4
-  w2_latency: 0.4
-  w3_queue: 0.2
-  q_max: 500
-  # Stress thresholds for violation detection
-  upper_threshold: 0.5
-  lower_threshold: 0.4
-
-# Proactive scaling thresholds
-proactive:
-  capacity_ratio_up: 0.70
-  latency_pressure_up: 0.75
-  capacity_ratio_down: 0.40
-
-# Prediction horizons in minutes
-prediction:
-  horizons: [1, 5, 15]
-  primary_horizon: 10
-
-# Baseline autoscaler parameters
-# Each baseline uses its OWN realistic cooldown reflecting real-world behavior.
-# These are NOT artificially inflated - they match documented K8s defaults
-# and published system specifications.
-baselines:
-  hpa:
-    target_cpu: 0.6
-    # K8s default --horizontal-pod-autoscaler-downscale-stabilization = 5 min
-    # At 30s/step cycle: 5 min / 30s = 10 steps
-    cooldown_steps: 10
-    # K8s default --horizontal-pod-autoscaler-tolerance = 0.1
-    tolerance: 0.1
-  vpa:
-    target_cpu_upper: 0.7
-    target_cpu_lower: 0.3
-    # VPA "Auto" mode requires pod eviction + restart + stabilization
-    # Realistic stabilization: ~6 minutes = 12 steps at 30s/step
-    cooldown_steps: 12
-    # Pod restart overhead: pods are unavailable for ~90s = 3 steps
-    restart_delay_steps: 3
-  themis:
-    # Themis performs expensive full (H,c)-plane search per evaluation
-    # Realistic re-optimization interval: ~4 minutes = 8 steps
-    cooldown_steps: 8
-  diagonal_scale:
-    epsilon: 0.01
-    delta_penalty: 0.5
-    weight_latency: 0.4
-    weight_cost: 0.4
-    weight_interaction: 0.2
-    # Greedy local search stabilization: ~4 minutes = 8 steps
-    cooldown_steps: 8
+# NFG-DiagScale controller (HGraphScale environment) parameters
+controller:
+  # Target container utilization the NSGA-II sizing heuristic aims for.
+  target_util: 0.5
+  # Minimum criticality (rank-weighted load pressure) required before acting.
+  idle_pressure: 0.25
+  # Fraction of remaining budget the controller is willing to commit to VMs.
+  budget_safety: 0.97
+  # Per-decision resource-change cap (res in [-max_res, +max_res]). Matches STAR's
+  # scale generator m=4 (Fang et al., 2026) for a fair action-space comparison.
+  max_res: 4

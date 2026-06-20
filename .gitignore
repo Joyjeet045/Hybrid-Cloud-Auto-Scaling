@@ -1,44 +1,58 @@
-# Python
+# ---- Python ----
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+
+# ---- Packaging / build artifacts ----
+# Anchored to the repo root (leading '/') so they never shadow real source
+# directories such as nfg_diagscale/hgraph_env/env/ or .../autoscaling_v1/lib/,
+# which hold the vendored HGraphScale simulator and MUST be committed.
+/build/
+/dist/
+/develop-eggs/
+/downloads/
+/eggs/
+/.eggs/
+/parts/
+/sdist/
+/var/
+/wheels/
 *.egg-info/
-.installed.cfg
 *.egg
+.installed.cfg
 
-# Virtual Environment
-venv/
-ENV/
+# ---- Virtual environments (repo root only) ----
+/.venv/
+/venv/
+/env/
+/ENV/
 
-# IDEs
+# ---- IDE / editor ----
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# Project Specific
-results/
-nfg_diagscale/data/datasets/*.gz
-nfg_diagscale/data/datasets/*.csv
-*.log
-checkpoint/
-debug/
-
-# OS
+# ---- OS ----
 .DS_Store
 Thumbs.db
+
+# ---- Runtime outputs (regenerable, not source) ----
+results/
+checkpoint/
+debug/
+*.log
+# Simulator packet/allocation trace dumps (written next to the lib code).
+**/allocation_trace_*.csv
+# Multi-GB raw trace archives (e.g. Alibaba NodeMetrics). The derived, tiny
+# lib/alibaba_workload.json IS tracked; the source tarballs never are.
+*.tar.gz
+
+# ---- Local scratch / throwaway audit scripts (never published) ----
+_sanity_*.json
+_audit_*.py
+_smoke_*.py
+_ref_*.py
+_star_setup.txt

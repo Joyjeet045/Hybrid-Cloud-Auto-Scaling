@@ -1,0 +1,9 @@
+**Heterogeneous VM types (EC2 m5, STAR Table 2)**
+
+| EC2 m5 type | vCPU | Memory (GiB) | On-demand $/hr |
+| --- | --- | --- | --- |
+| m5.xlarge | 4 | 16 | 0.192 |
+| m5.2xlarge | 8 | 32 | 0.384 |
+| m5.4xlarge | 16 | 64 | 0.768 |
+| m5.8xlarge | 32 | 128 | 1.536 |
+| m5.12xlarge | 48 | 192 | 2.304 |
