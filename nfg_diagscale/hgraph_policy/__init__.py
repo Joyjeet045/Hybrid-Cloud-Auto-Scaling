@@ -1,6 +1,6 @@
-"""NFG-DiagScale controller migrated to the HGraphScale heterogeneous-container env.
+"""NF-DiagScale controller migrated to the HGraphScale heterogeneous-container env.
 
-This package re-homes the NFG-DiagScale brain (Kalman forecasting + ANFIS
+This package re-homes the NF-DiagScale brain (Kalman forecasting + ANFIS
 neuro-fuzzy decision + a genetic/multi-objective magnitude optimizer) onto the
 vendored HGraphScale discrete-event simulator, replacing the original single-
 service toy environment, the Themis latency look-up, and the Prophet-LSTM stack.

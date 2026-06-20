@@ -1,10 +1,8 @@
-# import numpy as np
 import os, sys, inspect
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(os.path.dirname(currentdir))
 sys.path.insert(0, parentdir)
 from env.autoscaling_v1.lib.simqueue import SimQueue
-# from workflow_scheduling.env.poissonSampling import one_sample_poisson
 import math
 import heapq
 from env.autoscaling_v1.lib.vm import VM
@@ -12,13 +10,12 @@ from env.autoscaling_v1.lib.vm import VM
 
 class PM:
     def __init__(self, id, vcpu, t, vm_list: list): 
-        ##self, pmID, pmCPU, dcID, dataset.datacenter[dcid][0], self.nextTimeStep, task_selection_rule
         self.pmid = id
         self.used_vcpu = 0
-        self.vcpu = vcpu            # remaining vcpu of PM
+        self.vcpu = vcpu
         self.max_vcpu = vcpu
-        self.pmQueue = SimQueue()  # store the apps waiting to be processed
-        self.currentTimeStep = t  # record the leave time of the first processing app
+        self.pmQueue = SimQueue()
+        self.currentTimeStep = t
         self.rentStartTime = t
         self.rentEndTime = t
         self.currentQlen = 0
@@ -40,10 +37,10 @@ class PM:
     def get_utilization(self, app, task):
         numOfTask = self.totalProcessTime / (app.get_taskProcessTime(task)/self.vcpu)
         util = numOfTask/self.get_capacity(app, task) 
-        return util  ## == self.totalProcessTime / 60*60
+        return util
 
     def get_capacity(self, app, task):
-        return 60*60 / (app.get_taskProcessTime(task)/self.vcpu)  # how many tasks can processed in one hour
+        return 60*60 / (app.get_taskProcessTime(task)/self.vcpu)
 
     def get_pmid(self):
         return self.pmid
@@ -88,101 +85,25 @@ class PM:
 
         return is_empty
 
-    # ## self-defined
-    # def cal_priority(self, task, app):
         
-    #     if self.taskSelectRule is None:     # use the FIFO principal
-    #         enqueueTime = app.get_enqueueTime(task)
-    #         return enqueueTime
-    #     else:   
-    #         ## task_selection_rule Terminals: ET, WT, TIQ, NIQ, NOC, NOR, RDL
-    #         task_ExecuteTime_real = app.get_taskProcessTime(task)/self.vcpu                # ET
-    #         task_WaitingTime = self.get_taskWaitingTime(app, task)                        # WT
-    #         pm_TotalProcessTime = self.pmQueueTime()                                      # TIQ
-    #         pm_NumInQueue = self.currentQlen                                              # NIQ； 
-    #                         # not self.pmQueue.qlen(), because in self.task_enqueue(resort = Ture), it will changes with throwout
-    #         task_NumChildren = app.get_NumofSuccessors(task)                              # NOC
-    #         workflow_RemainTaskNum = app.get_totNumofTask() - app.get_completeTaskNum()   # NOR
-    #         RemainDueTime = app.get_Deadline() - self.currentTimeStep #- task_ExecuteTime_real # RDL
-
-    #         priority = self.taskSelectRule(ET = task_ExecuteTime_real, WT = task_WaitingTime, TIQ = pm_TotalProcessTime, 
-    #                 NIQ = pm_NumInQueue, NOC = task_NumChildren, NOR = workflow_RemainTaskNum, RDL= RemainDueTime)
-    #         return priority
 
 
-    # def get_firstTaskEnqueueTimeinVM(self):
-    #     if self.processingApp is None:
-    #         return math.inf
-    #     return self.processingApp.get_enqueueTime(self.processingtask)
 
-    # def get_firstTaskDequeueTime(self):
-    #     if self.get_pendingTaskNum() > 0:
-    #         return self.currentTimeStep
-    #     else:
-    #         return math.inf
 
-    # def get_firstDequeueTask(self):
-    #     return self.processingApp, self.processingtask
 
-    # # how long a new task needs to wait if it is assigned
-    # def get_pendingTaskNum(self):
-    #     if self.processingApp is None:
-    #         return 0
-    #     else:
-    #         return self.pmQueue.qlen()+1  # 1 is needed
 
-    # def task_enqueue(self, task, enqueueTime, app, resort=False):
-    #     temp = app.get_taskProcessTime(task)/self.vcpu       # execute the task in app
-    #     self.totalProcessTime += temp
-    #     self.pendingTaskTime += temp        
-    #     self.currentQlen = self.get_pendingTaskNum()        # number of pending queue + 1
 
-    #     app.update_executeTime(temp, task)
-    #     app.update_enqueueTime(enqueueTime, task, self.pmid)
-    #     self.pmQueue.enqueue(app, enqueueTime, task, self.pmid, enqueueTime) # last is priority
 
-    #     if self.processingApp is None:
-    #         self.process_task()
 
-    #     return temp
 
-    # def task_dequeue(self, resort=True):
-    #     task, app = self.processingtask, self.processingApp
 
-    #     # self.currentTimeStep always == dequeueTime(env.nextTimeStep)
 
-    #     qlen = self.pmQueue.qlen()
-    #     if qlen == 0:
-    #         self.processingApp = None
-    #         self.processingtask = None
-    #     else:
-    #         if resort:  
-    #             temppmQueue = SimQueue()
-    #             for _ in range(qlen):
-    #                 oldtask, oldapp = self.pmQueue.dequeue()        # Take out the tasks in self.pmQueue in turn and recalculate
-    #                 priority = self.cal_priority(oldtask, oldapp)   # re-calculate priority
-    #                 heapq.heappush(temppmQueue.queue, (priority, oldtask, oldapp))
-    #             self.pmQueue.queue = temppmQueue.queue
 
-    #         self.process_task()
-    #         self.currentQlen-=1
 
-    #     return task, app 
 
-    # def process_task(self): #
-    #     self.processingtask, self.processingApp = self.pmQueue.dequeue() 
-    #         # Pop and return the smallest item from the heap, the popped item is deleted from the heap
-    #     enqueueTime = self.processingApp.get_enqueueTime(self.processingtask)
-    #     processTime = self.processingApp.get_executeTime(self.processingtask)
 
-    #     taskStratTime = max(enqueueTime , self.currentTimeStep)
-    #     leaveTime = taskStratTime +processTime
 
-    #     self.processingApp.update_enqueueTime(taskStratTime, self.processingtask, self.pmid)
-    #     self.pendingTaskTime -= processTime
-    #     self.processingApp.update_pendingIndexVM(self.processingtask, self.pendingTaskNum)
-    #     self.pendingTaskNum+=1
-    #     self.currentTimeStep = leaveTime
+
 
     def pmQueueTime(self): 
         return max(round(self.pendingTaskTime,3), 0)
@@ -191,7 +112,6 @@ class PM:
         return self.totalProcessTime
     
     def pmLatestTime(self): 
-        # return self.totalProcessTime+self.rentStartTime    
         return self.currentTimeStep + self.pendingTaskTime
     
     def get_pmRentEndTime(self):
@@ -200,7 +120,3 @@ class PM:
     def update_pmRentEndTime(self, time):
         self.rentEndTime += time
 
-    # ## real_waitingTime in dual-tree = currentTime - enqueueTime
-    # def get_taskWaitingTime(self, app, task): 
-    #     waitingTime = self.currentTimeStep - app.get_enqueueTime(task)
-    #     return waitingTime

@@ -1,6 +1,6 @@
-"""Figure & table generator for NFG-DiagScale (HGraphScale environment).
+"""Figure & table generator for NF-DiagScale (HGraphScale environment).
 
-Produces the full set of plots and tables for the NFG-DiagScale autoscaling
+Produces the full set of plots and tables for the NF-DiagScale autoscaling
 architecture, mirroring the artifacts in the two inspiration papers:
 
   * STAR (Fang et al., 2026, ESWA): workload traces (Fig. 9), the MRT/Vio
@@ -9,8 +9,8 @@ architecture, mirroring the artifacts in the two inspiration papers:
   * HGraphScale (Hu et al., 2026, IEEE TSC): per-episode control trajectory
     (response time / cost / scaling actions over time).
 
-Plus the artifacts specific to NFG-DiagScale's Forecast->Fuzzify->NSGA-II->ANFIS
-pipeline: Kalman+Holt forecast accuracy, the NSGA-II Pareto front, the ANFIS
+Plus the artifacts specific to NF-DiagScale's Forecast->Fuzzify->Sizer->ANFIS
+pipeline: Kalman+Holt forecast accuracy, the cost-latency sizing front, the ANFIS
 fuzzy membership functions, and the fuzzy rule base.
 
 Everything is measured/derived from the vendored simulator and the live
@@ -35,13 +35,12 @@ import sys
 
 import numpy as np
 
-# --- make the package importable when run from anywhere -------------------- #
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 import matplotlib
-matplotlib.use("Agg")  # headless: write PNGs, never open a window
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from nfg_diagscale.config import load_config
@@ -53,10 +52,9 @@ from nfg_diagscale.decision.fuzzy_rules import (
 )
 import nfg_diagscale.hgraph_policy.optimizer as opt_mod
 
-# --------------------------------------------------------------------------- #
 BUDGET = 200.0
 DEADLINE = 500.0
-TEST_INTERVALS = 480           # STAR day-2 test split (= one day = budget window)
+TEST_INTERVALS = 480
 TRAIN_INTERVALS = 480
 
 FIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
@@ -71,31 +69,19 @@ SCENARIOS = {
 SCEN_ORDER = list(SCENARIOS)
 WORKLOADS = [("nasa", "NASA"), ("wiki", "Wikipedia"), ("alibaba", "Alibaba (real v2022)")]
 
-# baseline order + colours; NFG-DiagScale (ours) highlighted.
-METHODS = ["AWS-Scale", "ProScale", "DeepScale", "DRPC", "STAR", "NFG-DiagScale"]
+METHODS = ["AWS-Scale", "ProScale", "DeepScale", "DRPC", "STAR", "NF-DiagScale"]
 COLORS = {
     "AWS-Scale": "#9e9e9e", "ProScale": "#ff9800", "DeepScale": "#4caf50",
-    "DRPC": "#1e88e5", "STAR": "#8e24aa", "NFG-DiagScale": "#d32f2f",
+    "DRPC": "#1e88e5", "STAR": "#8e24aa", "NF-DiagScale": "#d32f2f",
 }
 
-# --- App-14 (beyond STAR Table 3) ---------------------------------------- #
-# STAR reports only the 11/12/13-microservice apps, so App-14 is baselined
-# against the sister paper HGraphScale (Hu et al., 2026, IEEE TSC; arXiv
-# 2511.01881) Table IV, whose competing methods include AGQ and HGraphScale.
-# Values are ART (ms) / Vio (% of cost over the $200/day budget) transcribed
-# verbatim from the published Table IV (arXiv 2511.01881v1).
-#
-# NOTE (honest caveat surfaced on the figure): the source Table IV lists an
-# *identical* ART column for NASA-14 and Wiki-14 for every method except AGQ
-# (only the Vio% differs) -- an apparent copy/transcription artifact in the
-# published table, reproduced here unchanged rather than "corrected".
 A14_SCENARIOS = [("N-14", "NASA-14"), ("W-14", "Wiki-14"), ("A-14", "Alibaba-14")]
 A14_METHODS = ["AWS-Scale", "ProScale", "DeepScale", "DRPC", "AGQ",
-               "HGraphScale", "NFG-DiagScale"]
+               "HGraphScale", "NF-DiagScale"]
 A14_COLORS = {
     "AWS-Scale": "#9e9e9e", "ProScale": "#ff9800", "DeepScale": "#4caf50",
     "DRPC": "#1e88e5", "AGQ": "#00897b", "HGraphScale": "#8e24aa",
-    "NFG-DiagScale": "#d32f2f",
+    "NF-DiagScale": "#d32f2f",
 }
 HGS_TABLE_IV_A14 = {
     "N-14": {"AWS-Scale": (1022.10, 0.00), "ProScale": (532.34, 28.37),
@@ -108,7 +94,6 @@ HGS_TABLE_IV_A14 = {
              "DeepScale": (327.00, 20.28), "DRPC": (277.06, 56.84),
              "AGQ": (421.87, 12.71), "HGraphScale": (299.28, 0.00)},
 }
-# scenario order for the cost-headroom figure (the 9 STAR apps + the 3 App-14).
 CH_ORDER = SCEN_ORDER + ["N-14", "W-14", "A-14"]
 
 _SILENT = io.StringIO()
@@ -157,27 +142,22 @@ def build_env(app, workload, seed=0):
         return HGraphScaleEnv(app=app, workload=workload, seed=seed, budget=BUDGET)
 
 
-# =========================================================================== #
-# Instrumented episode: one run powers fig3 (trajectory), fig4 (forecast),
-# fig5 (Pareto front).  Captured purely by reading public state + wrapping the
-# optimizer -- no source modification.
-# =========================================================================== #
 def run_instrumented(tag, seed, cfg):
     app, workload = SCENARIOS[tag]
     env = build_env(app, workload, seed)
 
     captured_fronts = []
-    orig_optimize = opt_mod.MagnitudeNSGA2.optimize
+    orig_solve = opt_mod.MagnitudeSizer.solve_exact
 
-    def _wrap(self, cur_h, cur_c, lam, et, **kw):
-        h_star, c_star, front = orig_optimize(self, cur_h, cur_c, lam, et, **kw)
+    def _wrap(self, cur_h, lam, et, **kw):
+        h_star, c_star, front = orig_solve(self, cur_h, lam, et, **kw)
         captured_fronts.append({"lam": float(lam), "h_star": int(h_star),
                                 "c_star": int(c_star), "front": list(front),
                                 "budget_room": float(kw.get("budget_room", float("nan"))),
-                                "cur_h": int(cur_h), "cur_c": int(cur_c)})
+                                "cur_h": int(cur_h)})
         return h_star, c_star, front
 
-    opt_mod.MagnitudeNSGA2.optimize = _wrap
+    opt_mod.MagnitudeSizer.solve_exact = _wrap
     try:
         with contextlib.redirect_stdout(_SILENT):
             state = env.reset(test=True)
@@ -185,10 +165,6 @@ def run_instrumented(tag, seed, cfg):
                                           total_intervals=TEST_INTERVALS)
             ctrl.reset(budget_T=BUDGET, total_intervals=TEST_INTERVALS)
 
-            # Capture the ANFIS (N) decision mode each time the controller
-            # actually deliberates (instance-level wrap, no source edit).
-            # Intervals where no microservice is under pressure never reach the
-            # ANFIS and are counted as pressure-gated no-ops afterwards.
             decide_modes = []
             _orig_decide = ctrl.anfis.decide
 
@@ -221,12 +197,10 @@ def run_instrumented(tag, seed, cfg):
                 traj["mean_rt"].append(float(np.mean(rts)) if rts else 0.0)
                 t += 1
     finally:
-        opt_mod.MagnitudeNSGA2.optimize = orig_optimize
+        opt_mod.MagnitudeSizer.solve_exact = orig_solve
 
     n = len(traj["cum_cost"])
     wl_test = list(env.set.Workload[TRAIN_INTERVALS:TRAIN_INTERVALS + n])
-    # Canonical per-interval signals the simulator itself records: end-to-end
-    # cumulative mean response time and cumulative cost (one append / interval).
     mean_step_rt = np.asarray(getattr(env, "mean_step_resptime", []), float)
     step_cost = np.asarray(getattr(env, "step_cost", []), float)
     return {
@@ -243,9 +217,6 @@ def run_instrumented(tag, seed, cfg):
     }
 
 
-# =========================================================================== #
-# FIGURE 1 -- workload traces (STAR Fig. 9 analog)
-# =========================================================================== #
 def fig_workloads():
     arrays = {}
     for wl, _label in WORKLOADS:
@@ -274,9 +245,6 @@ def fig_workloads():
     return _save(fig, "fig1_workload_traces.png"), arrays
 
 
-# =========================================================================== #
-# FIGURE 3 -- per-episode control trajectory (HGraphScale-style)
-# =========================================================================== #
 def fig_trajectory(epi):
     t = np.arange(epi["n"])
     tr = epi["traj"]
@@ -287,8 +255,6 @@ def fig_trajectory(epi):
     ax[0].set_title(f"Injected workload  -  {epi['tag']} "
                     f"({epi['app']}, {epi['workload']})", loc="left")
 
-    # End-to-end cumulative mean response time recorded by the simulator; its
-    # final value equals the episode MRT.
     rt = epi["mean_step_rt"]
     rt_x = np.arange(len(rt))
     ax[1].plot(rt_x, rt, color="#d32f2f", lw=1.4, label="end-to-end mean response time")
@@ -318,16 +284,12 @@ def fig_trajectory(epi):
     ax[3].legend(l1 + l2, la1 + la2, loc="upper right")
     for a in ax:
         a.margins(x=0.01)
-    fig.suptitle("NFG-DiagScale closed-loop control trajectory",
+    fig.suptitle("NF-DiagScale closed-loop control trajectory",
                  fontsize=13, fontweight="bold")
     return _save(fig, "fig3_control_trajectory.png")
 
 
-# =========================================================================== #
-# FIGURE 4 -- Kalman+Holt forecast accuracy (the "F" component)
-# =========================================================================== #
 def fig_forecast(epi, cfg):
-    # pick the busiest microservice type (highest mean observed load).
     types = set()
     for d in epi["observed_by_type"]:
         types.update(d.keys())
@@ -338,11 +300,8 @@ def fig_forecast(epi, cfg):
     bott = max(means, key=means.get)
     obs = np.asarray([d.get(bott, 0.0) for d in epi["observed_by_type"]], float)
 
-    # reconstruct the controller's one-step-ahead forecast for that type.
     fc = ContainerForecaster(cfg)
     fcast = np.asarray([fc.update(o) for o in obs], float)
-    # forecast made at i predicts i+1; align actual[i] with prediction made at i-1.
-    # skip a short warmup so the cold-start does not distort the curve / metric.
     warm = 2
     actual = obs[1 + warm:]
     pred = fcast[warm:-1]
@@ -366,9 +325,6 @@ def fig_forecast(epi, cfg):
     return _save(fig, "fig4_forecast_accuracy.png")
 
 
-# =========================================================================== #
-# FIGURE 5 -- NSGA-II Pareto front (the "G" component)
-# =========================================================================== #
 def fig_pareto(epi):
     raw = [f for f in epi["fronts"] if len(f["front"]) >= 3]
     if not raw:
@@ -387,11 +343,6 @@ def fig_pareto(epi):
             return None
         return (cp[2][0] - lo) / (hi - lo)
 
-    # Prefer a decision where the checkpoint sits *inside* the frontier (the
-    # optimizer actively traded latency against cost) -- that best illustrates
-    # the G component.  If every captured decision hit the budget guard (the
-    # checkpoint pinned to the minimal-cost corner to keep Vio=0), fall back to
-    # the richest peak-load front and say so on the plot.
     interior = [f for f in raw
                 if (r := _interiorness(f)) is not None and 0.15 <= r <= 0.85]
     if interior:
@@ -401,13 +352,12 @@ def fig_pareto(epi):
         rep = max(raw, key=lambda f: (len(f["front"]), f["lam"]))
         binding = True
 
-    # dedupe configs (NSGA-II may keep several copies of the same (h, c)).
     uniq = {}
     for p in rep["front"]:
         key = (p[0], p[1])
         if key not in uniq or p[2][0] < uniq[key][2][0]:
             uniq[key] = p
-    pts = sorted(uniq.values(), key=lambda p: p[2][1])      # sort by cost
+    pts = sorted(uniq.values(), key=lambda p: p[2][1])
     h = np.asarray([p[0] for p in pts], int)
     c = np.asarray([p[1] for p in pts], int)
     lat = np.asarray([p[2][0] for p in pts], float)
@@ -427,9 +377,6 @@ def fig_pareto(epi):
                    edgecolor="k", linewidth=0.8, zorder=5,
                    label=f"selected checkpoint Eq.8 (h*={h[i]}, c*={c[i]})")
 
-    # De-cluttered labels: the checkpoint is already named in the legend, so
-    # only annotate the *other* configs, and only those far enough apart along
-    # the cost axis that their text never overlaps.
     xspan = float(cost.max() - cost.min()) or 1.0
     last_x = -1e18
     for i in range(len(pts)):
@@ -452,18 +399,15 @@ def fig_pareto(epi):
 
     ax.set_xlabel("marginal VM cost (USD)")
     ax.set_ylabel("predicted batch response time (ms)")
-    ax.set_title(f"NSGA-II Pareto front (forecast load lam={rep['lam']:.0f} req/int)",
+    ax.set_title(f"Cost-latency sizing front (forecast load lam={rep['lam']:.0f} req/int)",
                  loc="left")
     if ax.get_legend_handles_labels()[0]:
         ax.legend(loc="upper right")
-    fig.suptitle("Magnitude optimization: latency-cost trade-off (G component)",
+    fig.suptitle("Magnitude sizing: latency-cost trade-off (feedforward anchor)",
                  fontsize=13, fontweight="bold")
     return _save(fig, "fig5_pareto_front.png")
 
 
-# =========================================================================== #
-# FIGURE 6 -- ANFIS fuzzy membership functions (the "N" component)
-# =========================================================================== #
 def fig_membership():
     ranges = {"psi": (0.0, 3.0), "omega": (0.0, 1.0), "phi": (0.0, 1.0), "rho": (0.0, 1.0)}
     titles = {
@@ -490,15 +434,11 @@ def fig_membership():
     return _save(fig, "fig6_membership_functions.png")
 
 
-# =========================================================================== #
-# FIGURE 9 -- ANFIS decision-mode breakdown (the "N" component, HGraphScale
-# Fig. 13 analog, with NFG-DiagScale's extra *diagonal* mode)
-# =========================================================================== #
 def fig_decision_modes(epi):
     """Quantitative breakdown of the ANFIS scaling decision per interval.
 
     Mirrors HGraphScale's Fig. 13 (vertical / horizontal / no-op action
-    counts) and adds NFG-DiagScale's distinctive *diagonal* mode (a single
+    counts) and adds NF-DiagScale's distinctive *diagonal* mode (a single
     decision that changes vCPU *and* replica count at once).  The controller
     only invokes the ANFIS when a microservice is under pressure; the
     remaining intervals -- plus deadzone-suppressed deliberations -- are
@@ -509,7 +449,7 @@ def fig_decision_modes(epi):
     vert = modes.count("vertical")
     diag = modes.count("diagonal")
     horiz = modes.count("horizontal")
-    noop = (n - len(modes)) + modes.count("none")  # pressure-gated + deadzone
+    noop = (n - len(modes)) + modes.count("none")
 
     cats = ["vertical", "diagonal", "horizontal", "no-op"]
     vals = [vert, diag, horiz, noop]
@@ -532,9 +472,6 @@ def fig_decision_modes(epi):
     return _save(fig, "fig9_decision_modes.png")
 
 
-# =========================================================================== #
-# FIGURE 2 + TABLE 1 -- MRT/Vio comparison vs STAR Table 3
-# =========================================================================== #
 def comparison_artifacts():
     if not os.path.exists(RESULTS_JSON):
         print(f"  [skip] {os.path.basename(RESULTS_JSON)} not found -- run the 9-scenario "
@@ -546,7 +483,6 @@ def comparison_artifacts():
     ours = data["nfg_diagscale"]
     tags = [t for t in SCEN_ORDER if t in ours]
 
-    # ---- table 1 ---- #
     headers = ["Scenario"] + METHODS + ["Beats STAR"]
     rows = []
     wins = 0
@@ -562,18 +498,17 @@ def comparison_artifacts():
         cells.append("YES" if beat else "no")
         rows.append(cells)
     _write_table("table1_comparison", headers, rows,
-                 title=f"MRT(ms)/Vio($) vs STAR Table 3 -- NFG-DiagScale wins {wins}/{len(tags)} "
+                 title=f"MRT(ms)/Vio($) vs STAR Table 3 -- NF-DiagScale wins {wins}/{len(tags)} "
                        "(lower MRT, zero violation)")
 
-    # ---- fig 2: grouped bars (MRT top, Vio bottom) ---- #
     fig, (axm, axv) = plt.subplots(2, 1, figsize=(13.5, 8.4))
     x = np.arange(len(tags))
     bw = 0.14
     for i, m in enumerate(METHODS):
-        mrt = [(ours[t]["MRT"] if m == "NFG-DiagScale" else star[t][m][0]) for t in tags]
-        vio = [(ours[t]["Vio"] if m == "NFG-DiagScale" else star[t][m][1]) for t in tags]
+        mrt = [(ours[t]["MRT"] if m == "NF-DiagScale" else star[t][m][0]) for t in tags]
+        vio = [(ours[t]["Vio"] if m == "NF-DiagScale" else star[t][m][1]) for t in tags]
         off = (i - (len(METHODS) - 1) / 2) * bw
-        edge = "k" if m == "NFG-DiagScale" else "none"
+        edge = "k" if m == "NF-DiagScale" else "none"
         axm.bar(x + off, mrt, bw, label=m, color=COLORS[m], edgecolor=edge, linewidth=0.7)
         axv.bar(x + off, vio, bw, label=m, color=COLORS[m], edgecolor=edge, linewidth=0.7)
     axm.set_ylabel("mean response time (ms)")
@@ -586,16 +521,13 @@ def comparison_artifacts():
     axv.set_xticks(x)
     axv.set_xticklabels(tags)
     axv.set_xlabel("scenario  (N/W/A workload  x  11/12/13-microservice app)")
-    fig.suptitle("NFG-DiagScale vs reported baselines (STAR Table 3)",
+    fig.suptitle("NF-DiagScale vs reported baselines (STAR Table 3)",
                  fontsize=13, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     _save(fig, "fig2_comparison_bars.png")
     return wins, len(tags)
 
 
-# =========================================================================== #
-# FIGURE 8 -- MRT reduction vs STAR (%) per scenario
-# =========================================================================== #
 def fig_mrt_reduction():
     if not os.path.exists(RESULTS_JSON):
         print(f"  [skip] {os.path.basename(RESULTS_JSON)} not found -- run the sweep first.")
@@ -619,7 +551,7 @@ def fig_mrt_reduction():
     ax.axhline(0, color="#333", lw=1.0)
     ax.set_ylabel("MRT reduction vs STAR (%)")
     ax.set_ylim(0, max(red) * 1.16)
-    ax.set_title(f"NFG-DiagScale mean response-time reduction vs STAR  "
+    ax.set_title(f"NF-DiagScale mean response-time reduction vs STAR  "
                  f"(mean {np.mean(red):.0f}%, every scenario improved)", loc="left")
     from matplotlib.patches import Patch
     ax.legend(handles=[Patch(color=cmap["N"], label="NASA"),
@@ -631,9 +563,6 @@ def fig_mrt_reduction():
     return _save(fig, "fig8_mrt_reduction.png")
 
 
-# =========================================================================== #
-# FIGURE 7 + TABLE 5 -- App-14 comparison vs HGraphScale IEEE TSC Table IV
-# =========================================================================== #
 def a14_artifacts():
     if not os.path.exists(RESULTS_JSON):
         print(f"  [skip] {os.path.basename(RESULTS_JSON)} not found -- run the A14 sweep first.")
@@ -646,7 +575,6 @@ def a14_artifacts():
         return None
     label = dict(A14_SCENARIOS)
 
-    # ---- table 5 ---- #
     headers = ["Scenario"] + A14_METHODS + ["Beats HGraphScale"]
     rows, wins = [], 0
     for tag in tags:
@@ -662,22 +590,21 @@ def a14_artifacts():
         rows.append(cells)
     _write_table("table5_a14_comparison", headers, rows,
                  title="App-14 ART(ms)/Vio vs HGraphScale IEEE TSC Table IV "
-                       f"(STAR reports no App-14) -- NFG-DiagScale beats HGraphScale {wins}/{len(tags)}. "
+                       f"(STAR reports no App-14) -- NF-DiagScale beats HGraphScale {wins}/{len(tags)}. "
                        "Source Table IV lists identical NASA-14/Wiki-14 ART (apparent transcription artifact).")
 
-    # ---- fig 7: grouped bars (ART top, Vio bottom) ---- #
     fig, (axm, axv) = plt.subplots(2, 1, figsize=(12, 8.2))
     x = np.arange(len(tags))
     bw = 0.12
     for i, m in enumerate(A14_METHODS):
-        if m == "NFG-DiagScale":
+        if m == "NF-DiagScale":
             art = [ours[t]["MRT"] for t in tags]
             vio = [ours[t]["Vio"] for t in tags]
         else:
             art = [HGS_TABLE_IV_A14[t][m][0] for t in tags]
             vio = [HGS_TABLE_IV_A14[t][m][1] for t in tags]
         off = (i - (len(A14_METHODS) - 1) / 2) * bw
-        edge = "k" if m == "NFG-DiagScale" else "none"
+        edge = "k" if m == "NF-DiagScale" else "none"
         axm.bar(x + off, art, bw, label=m, color=A14_COLORS[m], edgecolor=edge, linewidth=0.7)
         axv.bar(x + off, vio, bw, label=m, color=A14_COLORS[m], edgecolor=edge, linewidth=0.7)
     axm.axhline(DEADLINE, color="#555", ls="--", lw=1.0)
@@ -689,20 +616,17 @@ def a14_artifacts():
     axm.set_xticklabels([label[t] for t in tags])
     axm.legend(ncol=7, loc="upper center", bbox_to_anchor=(0.5, 1.20))
     axv.set_ylabel("budget violation (%)")
-    axv.set_title("App-14 budget violation (zero is best; NFG-DiagScale = 0)", loc="left")
+    axv.set_title("App-14 budget violation (zero is best; NF-DiagScale = 0)", loc="left")
     axv.set_xticks(x)
     axv.set_xticklabels([label[t] for t in tags])
     axv.set_xlabel("real-world trace  x  App-14 (14-microservice application)")
-    fig.suptitle("App-14: NFG-DiagScale vs HGraphScale IEEE TSC Table IV (beyond STAR Table 3)",
+    fig.suptitle("App-14: NF-DiagScale vs HGraphScale IEEE TSC Table IV (beyond STAR Table 3)",
                  fontsize=13, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     _save(fig, "fig7_a14_comparison.png")
     return wins, len(tags)
 
 
-# =========================================================================== #
-# FIGURE 10 -- cost headroom under the $200/day budget
-# =========================================================================== #
 def fig_cost_headroom():
     if not os.path.exists(RESULTS_JSON):
         print(f"  [skip] {os.path.basename(RESULTS_JSON)} not found -- run the sweep first.")
@@ -711,7 +635,7 @@ def fig_cost_headroom():
         ours = json.load(fh)["nfg_diagscale"]
     tags = [t for t in CH_ORDER if t in ours]
     if not tags:
-        print("  [skip] no NFG-DiagScale results in JSON.")
+        print("  [skip] no NF-DiagScale results in JSON.")
         return None
     cost = [float(ours[t].get("VM_cost", ours[t].get("cost", float("nan")))) for t in tags]
     cmap = {"N": "#1e88e5", "W": "#8e24aa", "A": "#2e7d32"}
@@ -740,9 +664,6 @@ def fig_cost_headroom():
     return _save(fig, "fig10_cost_headroom.png")
 
 
-# =========================================================================== #
-# TABLES 2-4 (static, read from code/config)
-# =========================================================================== #
 def table_vm_types():
     env = build_env("A11", "nasa", 0)
     ds = env.set.dataset
@@ -777,17 +698,16 @@ def table_hyperparams(cfg):
 
     add("Kalman filter", cfg.get("kalman", {}))
     add("Holt forecast", cfg.get("forecast", {}))
-    add("NSGA-II", cfg.get("nsga2", {}))
-    add("ANFIS", cfg.get("anfis", {}))
-    add("Rebalance", cfg.get("rebalance", {}))
+    add("ANFIS deadzones", cfg.get("anfis", {}))
+    add("Online learning", cfg.get("adaptive", {}))
+    add("Sizer rebalance", cfg.get("rebalance", {}))
     add("Cloud bounds", cfg.get("cloud", {}))
     add("Controller", cfg.get("controller", {}))
     rows.append(["SLO", "slo_ms", cfg.get("slo_ms")])
     _write_table("table4_hyperparameters", headers, rows,
-                 title="NFG-DiagScale configuration (default.yaml)")
+                 title="NF-DiagScale configuration (default.yaml)")
 
 
-# =========================================================================== #
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rep", default="A-12", choices=SCEN_ORDER,
@@ -802,7 +722,7 @@ def main():
     os.makedirs(FIG_DIR, exist_ok=True)
     os.makedirs(TAB_DIR, exist_ok=True)
 
-    print("\n=== NFG-DiagScale report generator ===")
+    print("\n=== NF-DiagScale report generator ===")
 
     if args.run_comparison:
         print("\n[0/8] Running 9-scenario sweep (this is the slow part)...")
@@ -816,13 +736,13 @@ def main():
     print(f"\n[2/12] Instrumented episode {args.rep} (powers fig3/fig4/fig5/fig9)...")
     epi = run_instrumented(args.rep, args.seed, cfg)
     print(f"      -> MRT {epi['mrt']:.1f} ms, cost ${epi['cost']:.1f}, "
-          f"{epi['n']} intervals, {len(epi['fronts'])} GA decisions")
+          f"{epi['n']} intervals, {len(epi['fronts'])} sizing decisions")
 
     print("\n[3/12] Control trajectory (fig3)...")
     fig_trajectory(epi)
     print("\n[4/12] Forecast accuracy (fig4)...")
     fig_forecast(epi, cfg)
-    print("\n[5/12] NSGA-II Pareto front (fig5)...")
+    print("\n[5/12] Cost-latency sizing front (fig5)...")
     fig_pareto(epi)
     print("\n[6/12] ANFIS membership functions (fig6)...")
     fig_membership()

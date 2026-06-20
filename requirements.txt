@@ -1,4 +1,4 @@
 numpy>=1.24.0
 networkx>=3.0
 pyyaml>=6.0
-matplotlib>=3.5      # reporting/make_report.py only (figures + tables)
+matplotlib>=3.5

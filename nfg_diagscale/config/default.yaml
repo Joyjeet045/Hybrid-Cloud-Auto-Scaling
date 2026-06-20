@@ -1,9 +1,3 @@
-# NFG-DiagScale (HGraphScale environment) controller configuration.
-# Only the keys consumed by the migrated controller remain; the legacy
-# standalone-simulator sections (Prophet/LSTM/Themis/MAPE-K/baselines) were
-# removed along with their modules.
-
-# Kalman filter for RPS estimation (Kalman 1960)
 kalman:
   A: 1.0
   H: 1.0
@@ -11,57 +5,41 @@ kalman:
   D: 0.1
   initial_P: 1.0
 
-# Per-container temporal forecasting (Holt linear trend on Kalman-smoothed load)
 forecast:
   holt_alpha: 0.5
   holt_beta: 0.3
 
-# Soft per-request deadline / SLO used by the ANFIS engine (ms). Matches the
-# HGraphScale simulator's request deadline.
 slo_ms: 500.0
 
-# Rebalance (vertical-preference) penalty weight used in NSGA-II fitness.
 rebalance:
-  # Multiplier applied to the rebalance penalty in NSGA-II fitness.
   penalty_multiplier: 1.5
 
-# ANFIS decision engine (Jang 1993), used in inference mode.
 anfis:
-  # GA checkpoint influence weight (how much NSGA-II steers ANFIS output).
-  ga_influence_weight: 0.45
-  # Adaptive deadzone widths by load regime (fuzzy stability deadzones).
   deadzone_low: 0.25
   deadzone_moderate: 0.40
   deadzone_near_capacity: 0.55
   deadzone_over_capacity: 0.15
 
-# NSGA-II optimizer
-nsga2:
-  population_size: 20
-  generations: 15
-  crossover_prob: 0.9
-  mutation_prob: 0.1
-  horizon_steps: 3
-  run_interval_steps: 5
+adaptive:
+  enabled: true
+  eta: 0.10
+  kappa_slo: 1.0
+  kappa_cost: 0.5
+  beta: 0.9
+  deadzone_eps: 0.05
+  budget_pacing: true
+  bound_dc: 6.0
+  bound_dn: 5.0
 
-# Cloud environment bounds (per-container replica/vCPU limits).
 cloud:
   min_replicas: 1
   max_replicas: 15
   min_cores: 1
   max_cores: 16
   pod_max_rps: 20
-  # Daily cost budget (USD) from the STAR/HGraphScale protocol ($200/day).
   budget: 200.0
 
-# NFG-DiagScale controller (HGraphScale environment) parameters
 controller:
-  # Target container utilization the NSGA-II sizing heuristic aims for.
-  target_util: 0.5
-  # Minimum criticality (rank-weighted load pressure) required before acting.
   idle_pressure: 0.25
-  # Fraction of remaining budget the controller is willing to commit to VMs.
   budget_safety: 0.97
-  # Per-decision resource-change cap (res in [-max_res, +max_res]). Matches STAR's
-  # scale generator m=4 (Fang et al., 2026) for a fair action-space comparison.
   max_res: 4

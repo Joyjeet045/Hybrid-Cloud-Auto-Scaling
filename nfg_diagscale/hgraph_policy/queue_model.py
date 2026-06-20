@@ -1,6 +1,6 @@
 """Grounded latency and cost models for the HGraphScale environment.
 
-These replace NFG-DiagScale's original Themis latency look-up table with closed-
+These replace NF-DiagScale's original Themis latency look-up table with closed-
 form models whose physics match the vendored simulator, so the optimizer and the
 ANFIS engine reason about the *same* dynamics the simulator actually executes.
 
@@ -42,31 +42,24 @@ def batch_response_time(lam: float, et: float, vcpu: float, replicas: int) -> fl
     return D + queue_delay
 
 
-def load_factor(lam: float, et: float, vcpu: float, replicas: int, deadline: float) -> float:
-    """Dimensionless load/pressure ``psi`` = (batch drain time) / deadline.
+def load_factor_cwrr(lam: float, et: float, total_vcpu: float, deadline: float) -> float:
+    """CWRR-weighted load/pressure ``psi`` for a (possibly heterogeneous) replica set.
 
-    ``psi >= 1`` means the predicted burst cannot drain within the deadline at the
-    current allocation, i.e. the container is a latency bottleneck.
+    HGraphScale balances a microservice's burst across its replicas with
+    Cost-Weighted Round Robin (Eq. 15): replica ``j`` receives a share of the load
+    proportional to its vCPU, ``W_j = c_j / sum_k c_k``. Under CWRR every replica's
+    drain time collapses to the *same* value regardless of how vCPU is distributed:
+
+        q_j * D_j = (lam * c_j / sum c) * (et / c_j) = lam * et / sum_k c_k,
+
+    so the bottleneck pressure depends only on the microservice's *total* vCPU.
+    This matches the simulator's load balancer exactly and is robust to the
+    heterogeneous replicas that diagonal scaling produces (one replica boosted
+    first) without any mean-vCPU rounding.
     """
-    vcpu = max(vcpu, 1e-6)
-    replicas = max(int(replicas), 1)
-    D = et / vcpu
-    q = lam / replicas
-    drain_time = q * D
+    total_vcpu = max(float(total_vcpu), 1e-6)
+    drain_time = lam * et / total_vcpu
     return drain_time / max(deadline, 1e-6)
-
-
-def required_vcpu(lam: float, et: float, replicas: int, deadline: float,
-                  target_util: float = 0.5) -> float:
-    """vCPU per replica needed to drain the predicted burst at ``target_util``.
-
-    Solves ``load_factor == target_util`` for ``vcpu``:
-        vcpu = (lambda / n) * et / (target_util * deadline).
-    """
-    replicas = max(int(replicas), 1)
-    target_util = min(max(target_util, 1e-3), 1.0)
-    q = lam / replicas
-    return q * et / (target_util * deadline)
 
 
 def marginal_vm_cost(old_total_vcpu: float, new_total_vcpu: float,

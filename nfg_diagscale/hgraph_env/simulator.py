@@ -21,16 +21,12 @@ The reward is HGraphScale Eq. 9:
 """
 from __future__ import annotations
 
-# Importing the package wires the vendored directory onto sys.path so the
-# simulator's absolute imports (``env.autoscaling_v1...``, ``config.param``)
-# resolve to the vendored copies.
-import nfg_diagscale.hgraph_env  # noqa: F401
+import nfg_diagscale.hgraph_env
 
 from env.autoscaling_v1.lib.cloud_env_maxPktNum import cloud_simulator
 
 from nfg_diagscale.hgraph_env.state import CloudState, extract_state
 
-# Map a human-readable workload name to the simulator's ``workload_pattern``.
 WORKLOAD_PATTERNS = {
     "nasa": 0,
     "wiki": 1,
@@ -59,7 +55,7 @@ class HGraphScaleEnv(cloud_simulator):
             "envid": 0,
             "app_size": app,
             "app_num": app_num,
-            "app_types": app,            # ASEnv sets app_types == app_size
+            "app_types": app,
             "workload_pattern": pattern,
             "budget": budget,
         }
@@ -68,9 +64,6 @@ class HGraphScaleEnv(cloud_simulator):
         self.app = app
         self.workload = workload
 
-    # ------------------------------------------------------------------ #
-    # control API
-    # ------------------------------------------------------------------ #
     def reset(self, test: bool = True) -> CloudState:
         """Reset the simulator and return the initial torch-free state."""
         super().reset(self._seed, test=test)
@@ -92,19 +85,14 @@ class HGraphScaleEnv(cloud_simulator):
         info = getattr(self, "episode_info", {}) if done else {}
         return state, reward, done, info
 
-    # ------------------------------------------------------------------ #
-    # helpers
-    # ------------------------------------------------------------------ #
     def _build_action(self, decision):
         """Translate ``(con_id, delta)`` into the HGraphScale action tuple."""
         inverse_map = {cid: cid for cid in self.con_queues}
         if not decision:
-            # No-op: target any live container with a zero vCPU delta.
             any_id = next(iter(self.con_queues))
             return (any_id, 0, inverse_map)
         con_id, delta = decision
         if con_id not in inverse_map:
-            # Container disappeared (e.g. scaled-in); degrade to no-op.
             any_id = next(iter(self.con_queues))
             return (any_id, 0, inverse_map)
         return (con_id, int(delta), inverse_map)

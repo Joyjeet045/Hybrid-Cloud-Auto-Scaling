@@ -1,6 +1,6 @@
 """Per-container temporal load forecasting (Kalman + Holt).
 
-NFG-DiagScale's forecasting identity is a Kalman filter (Kalman, 1960) for noise
+NF-DiagScale's forecasting identity is a Kalman filter (Kalman, 1960) for noise
 suppression. We keep that and add Holt's linear (double-exponential) smoothing
 (Holt, 1957) to extrapolate the *trend* one control interval ahead, which makes
 the autoscaler proactive about ramps (the "temporal workload variations" that
@@ -40,11 +40,6 @@ class HoltForecaster:
         self._trend = self.beta * (self._level - prev_level) + (1.0 - self.beta) * self._trend
         return self._level + self._trend
 
-    def forecast(self) -> float:
-        if self._level is None:
-            return 0.0
-        return self._level + self._trend
-
 
 class ContainerForecaster:
     """Kalman-smoothed, Holt-trended one-step-ahead request forecaster."""
@@ -61,17 +56,5 @@ class ContainerForecaster:
         """Ingest one observed per-interval request count, return the forecast."""
         smoothed = self._kf.update(float(observed))
         forecast = self._holt.update(smoothed)
-        # The next interval cannot have negative demand.
         self._last = max(0.0, forecast)
         return self._last
-
-    def predict(self) -> float:
-        return self._last
-
-
-def seed_from_history(config, history) -> ContainerForecaster:
-    """Build a forecaster and warm it up on an existing per-slot history array."""
-    fc = ContainerForecaster(config)
-    for y in history:
-        fc.update(y)
-    return fc

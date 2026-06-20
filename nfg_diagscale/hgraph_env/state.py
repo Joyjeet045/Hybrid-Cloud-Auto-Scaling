@@ -1,7 +1,7 @@
 """Torch-free state extraction for the vendored HGraphScale simulator.
 
 The original HGraphScale policy consumes a PyTorch-Geometric hierarchical graph
-(PM -> VM -> container) built by ``utils.utils.graph_construct``. NFG-DiagScale
+(PM -> VM -> container) built by ``utils.utils.graph_construct``. NF-DiagScale
 does not use a GNN, so we read the same underlying quantities directly from the
 ``cloud_simulator`` object into a plain, numpy-friendly :class:`CloudState`.
 
@@ -30,32 +30,32 @@ import numpy as np
 class ContainerState:
     """Snapshot of a single container (microservice replica)."""
 
-    con_id: int                 # live container id in the simulator
-    con_type: int               # microservice id (DAG node) it instantiates
-    vcpu: float                 # current vCPU allocation
-    max_scal_vcpu: float        # free vCPU on the host VM (vertical headroom)
-    qlen: int                   # pending tasks in the container queue
-    pending_time: float         # remaining processing time in queue (ms)
-    aver_resptime: float        # mean response time of finished tasks (ms)
-    request_num: int            # requests received in the current slot
-    workload_his: np.ndarray    # per-slot request counts (history)
-    rank: float                 # upward DAG rank of con_type (criticality)
+    con_id: int
+    con_type: int
+    vcpu: float
+    max_scal_vcpu: float
+    qlen: int
+    pending_time: float
+    aver_resptime: float
+    request_num: int
+    workload_his: np.ndarray
+    rank: float
 
 
 @dataclass
 class CloudState:
-    """Full torch-free observation passed to the NFG-DiagScale controller."""
+    """Full torch-free observation passed to the NF-DiagScale controller."""
 
     containers: list[ContainerState]
     map_type_to_conids: dict[int, list[int]]
     num_microservices: int
     total_cost: float
     budget: float
-    deadline: float                       # per-request soft deadline (ms)
-    slot_index: int                       # number of completed scaling intervals
-    num_vms: int = 0                       # active rented VMs (cost driver)
-    rank: dict[int, float] = field(default_factory=dict)   # type -> upward rank
-    proc_time: dict[int, float] = field(default_factory=dict)  # type -> base et (ms)
+    deadline: float
+    slot_index: int
+    num_vms: int = 0
+    rank: dict[int, float] = field(default_factory=dict)
+    proc_time: dict[int, float] = field(default_factory=dict)
 
     @property
     def cost_headroom(self) -> float:
@@ -78,7 +78,6 @@ def _compute_upward_rank(dag, proc_attr: str = "processTime") -> dict[int, float
     def _proc(n) -> float:
         return float(dag.nodes[n].get(proc_attr, 0.0))
 
-    # Process nodes in reverse topological order so successors are ready first.
     try:
         import networkx as nx
 
@@ -107,7 +106,6 @@ def get_static_rank(sim) -> dict[int, float]:
         return cached
     dag = sim.set.dataset.wset[0]
     rank = _compute_upward_rank(dag)
-    # Normalize to [0, 1] for stable fuzzy inputs.
     if rank:
         max_r = max(rank.values()) or 1.0
         rank = {k: v / max_r for k, v in rank.items()}
@@ -156,7 +154,6 @@ def extract_state(sim) -> CloudState:
             )
         )
 
-    # number of completed scaling intervals so far (one append per interval).
     slot_index = int(len(getattr(sim, "step_cost", [])))
     num_vms = int(len(getattr(sim, "vm_queues", [])))
 

@@ -14,15 +14,13 @@ class SimQueue:
         return len(self.queue)
 
     def enqueue(self, pkt, t, task, vmID, priority): 
-        ## self, workflow, enqueueTime, task, vmID, priority
-        if task is None:    # task didnt start yet
+        if task is None:
             pkt.update_enqueueTime(t, task, vmID)
-        heapq.heappush(self.queue, (priority, task, pkt)) # Add new task information in self.queue
+        heapq.heappush(self.queue, (priority, task, pkt))
 
     def dequeue(self):
         if len(self.queue) > 0:
             _, task, pkt = heapq.heappop(self.queue) 
-                # Pop and return the smallest item from the heap, the popped item is deleted from the heap 
             return task, pkt
         else:
             logging.error("queue is empty")

@@ -26,14 +26,14 @@ class Stats:
             while True:
                 ind_new = ind_old + self.history_len
                 self.arr_rate_index.append(ind_new)
-                self.app_arr_rate_map = np.roll(self.app_arr_rate_map, -1, axis=-1)  # shift all elements to left by offset=1
-                self.app_arr_rate_map[:,:,-1] = 0  # the value under ind_new is 0
+                self.app_arr_rate_map = np.roll(self.app_arr_rate_map, -1, axis=-1)
+                self.app_arr_rate_map[:,:,-1] = 0
 
                 if intervals == self.history_len:
                     break
-                else:       # intervals > self.history_len
+                else:
                     ind_old = self.arr_rate_index.popleft()
-                    intervals = ind_new_orig - ind_old      ## continue to move self.app_arr_rate_map to left
+                    intervals = ind_new_orig - ind_old
 
 
     def add_app_arrival_rate(self, usr, app, arrival_time):

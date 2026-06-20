@@ -8,7 +8,7 @@ code is at https://github.com/sine-fandel/HGraphScale .
 Only the simulator core (``env/autoscaling_v1``) is vendored. The original
 PyTorch-Geometric state builder (``utils.utils.graph_construct``) and the gym
 dependency are intentionally replaced by lightweight shims so that the
-simulator runs on a minimal ``numpy + networkx`` stack. Our NFG-DiagScale
+simulator runs on a minimal ``numpy + networkx`` stack. Our NF-DiagScale
 policy reads the simulator state directly (see :mod:`nfg_diagscale.hgraph_env.state`)
 instead of using the GNN graph tensors.
 

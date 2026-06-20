@@ -47,14 +47,14 @@ def calcPURank(wf, vmVCPU, theta=0):
 
     rankuDict = {}
 
-    tasks = wf.app.nodes  # get the list of all tasks in the wf
-    exit = [n for n, d in wf.app.out_degree() if d == 0]  # get the exit task ID
+    tasks = wf.app.nodes
+    exit = [n for n, d in wf.app.out_degree() if d == 0]
 
     for i in tasks:
         cost = 0
         for leaf in exit:
             if i is leaf:
-                cost = tasks[i]['processTime'] / vmVCPU[-1]  # dataset.vmVCPU[-1] is the fastest vm
+                cost = tasks[i]['processTime'] / vmVCPU[-1]
             else:
                 for path in nx.all_simple_paths(wf.app, source=i, target=leaf):
                     temp = 0
@@ -105,7 +105,6 @@ def calPSD(wf, deadline, vmVCPU):
     """
     psd = {}
     rankuDict = calcPURank(wf, vmVCPU)
-    # entrance = [n for n, d in wf.app.in_degree() if d == 0]  # get the entrance task ID
     PURankEntry = max(rankuDict.values())
 
     for task in rankuDict:

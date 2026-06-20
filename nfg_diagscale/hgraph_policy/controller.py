@@ -1,9 +1,11 @@
-"""NFG-DiagScale controller for the HGraphScale environment.
+"""NF-DiagScale controller for the HGraphScale environment.
 
-This is the closed-loop autoscaling policy that plugs NFG-DiagScale (Neuro-Fuzzy-
-Genetic Diagonal Scaling) into the vendored HGraphScale simulator. One scaling
+This is the closed-loop autoscaling policy that plugs NF-DiagScale (a self-tuning
+Neuro-Fuzzy Diagonal Scaler) into the vendored HGraphScale simulator. One scaling
 decision is emitted per 3-minute control interval, matching the simulator's
-one-action-per-step contract.
+one-action-per-step contract. (The Python package keeps the legacy ``nfg_``
+prefix for import stability; the magnitude sizer is a *deterministic* queue-model
+enumeration.)
 
 Pipeline (each interval):
 
@@ -12,24 +14,35 @@ Pipeline (each interval):
    ``workload_his`` (Kalman 1960; Holt 1957).
 
 2. Fuzzify (F).  Four grounded inputs per microservice:
-     psi   = predicted batch-drain time / deadline   (load pressure; queue_model)
+     psi   = CWRR-weighted batch-drain time / deadline (load pressure; Eq. 15)
      omega = latency slack vs. deadline               (SLO headroom)
      phi   = remaining budget fraction                (cost headroom; Eq. 5/7)
      rho   = binary risk flag (overload / near-SLO)
    The DAG upward rank (HEFT; Topcuoglu 2002) weights pressure so critical-path
-   microservices are prioritized — this is the "spatial dependency" signal.
+   microservices are prioritized -- this is the "spatial dependency" signal.
 
-3. Optimize (G).  NSGA-II (:class:`MagnitudeNSGA2`, Deb 2002) searches the
-   bottleneck's ``(replicas, vCPU)`` allocation for the Pareto trade-off between
-   predicted response time and marginal VM cost, returning a knee checkpoint.
+3. Size (deterministic feedforward).  An exact queue-model sizer
+   (:meth:`MagnitudeSizer.solve_exact`) enumerates the bounded
+   ``(replicas, vCPU)`` grid and returns the cost-feasible knee ``(h*, c*)`` that
+   minimises predicted response time subject to the budget (STAR Eq. 8) -- a
+   reproducible, globally-optimal exact solution.
 
-4. Decide (N).  ANFIS (:class:`ANFISEngine`, Jang 1993) defuzzifies the fuzzy
-   inputs, biased toward the NSGA-II checkpoint, into ``(mode, delta_c, delta_n)``.
+4. Decide (N).  An online self-tuning ANFIS (:class:`ANFISEngine`, Jang 1993;
+   adaptive fuzzy control, Wang 1993) blends the deterministic anchor with its
+   fuzzy output into ``(mode, delta_c, delta_n)``. Its rule consequents are tuned
+   online from the realised SLO/cost outcome of the previous decision (step 6),
+   so the fuzzy layer corrects the anchor's systematic model error from feedback.
 
 5. Actuate (Diagonal).  The target vCPU change is applied to the hottest replica.
-   The simulator fills vertical headroom first and overflows into a new replica —
+   The simulator fills vertical headroom first and overflows into a new replica --
    i.e. native vertical-first *diagonal* scaling. A budget guard blocks new-VM
    spawns that would breach the per-day budget, keeping cost violation at zero.
+
+6. Learn (online).  At the next interval, before deciding, the controller reads
+   the realised response time of the microservice it last scaled and the realised
+   cumulative cost, forms the SLO and budget-pacing errors, and adapts the fired
+   ANFIS rules' singleton consequents (:meth:`ANFISEngine.adapt`). The premise
+   membership functions stay fixed, keeping the fuzzy partition interpretable.
 """
 from __future__ import annotations
 
@@ -38,11 +51,11 @@ import numpy as np
 from nfg_diagscale.decision.anfis import ANFISEngine
 from nfg_diagscale.hgraph_policy import queue_model
 from nfg_diagscale.hgraph_policy.forecaster import ContainerForecaster
-from nfg_diagscale.hgraph_policy.optimizer import MagnitudeNSGA2
+from nfg_diagscale.hgraph_policy.optimizer import MagnitudeSizer
 
 
 class NFGDiagScaleController:
-    """Forecast -> fuzzify -> NSGA-II -> ANFIS -> diagonal actuation."""
+    """Forecast -> fuzzify -> deterministic sizing + adaptive ANFIS -> diagonal -> learn."""
 
     def __init__(self, config, *, deadline: float = 500.0, vm_size: float = 16.0,
                  vm_price_per_hr: float = 0.768, interval_minutes: float = 3.0,
@@ -56,7 +69,7 @@ class NFGDiagScaleController:
         self.penalty = float(penalty)
 
         self.anfis = ANFISEngine(config)
-        self.optimizer = MagnitudeNSGA2(config)
+        self.sizer = MagnitudeSizer(config)
 
         cloud = config.get("cloud", {})
         self.max_cores = int(cloud.get("max_cores", 16))
@@ -65,28 +78,30 @@ class NFGDiagScaleController:
         self.min_replicas = int(cloud.get("min_replicas", 1))
 
         ctrl = config.get("controller", {})
-        # Target utilization for the optimizer's sizing heuristic.
-        self.target_util = float(ctrl.get("target_util", 0.5))
-        # Below this criticality, suppress actions (fuzzy stability deadzone).
         self.idle_pressure = float(ctrl.get("idle_pressure", 0.25))
-        # Safety fraction of the budget we are willing to commit to VMs.
         self.budget_safety = float(ctrl.get("budget_safety", 0.97))
-        # Per-decision resource-change cap, matching STAR's Scale Generator, which
-        # emits res in [-m, +m] with m=4 (Fang et al., 2026). Caps |delta_total|
-        # so our action space is identical to the baseline's for a fair comparison.
         self.max_res = int(ctrl.get("max_res", 4))
 
         self.budget_T = float(config.get("cloud", {}).get("budget", 200.0))
         self._forecasters: dict[int, ContainerForecaster] = {}
 
-    # ------------------------------------------------------------------ #
+        adp = config.get("adaptive", {})
+        self.kappa_slo = float(adp.get("kappa_slo", 1.0))
+        self.kappa_cost = float(adp.get("kappa_cost", 0.5))
+        self.adapt_beta = float(adp.get("beta", 0.9))
+        self.budget_pacing = bool(adp.get("budget_pacing", True))
+        self._pending: dict | None = None
+        self.learn_trace: list[dict] = []
+
     def reset(self, budget_T: float, total_intervals: int | None = None) -> None:
         self.budget_T = float(budget_T)
         if total_intervals is not None:
             self.total_intervals = int(total_intervals)
         self._forecasters = {}
+        self._pending = None
+        self.learn_trace = []
+        self.anfis.reset_consequents()
 
-    # ------------------------------------------------------------------ #
     def _forecaster(self, con_type: int) -> ContainerForecaster:
         fc = self._forecasters.get(con_type)
         if fc is None:
@@ -103,11 +118,57 @@ class NFGDiagScaleController:
                 total += float(c.workload_his[-1])
         return total
 
-    # ------------------------------------------------------------------ #
+    def _learn_from_outcome(self, state) -> None:
+        """Adapt the previously-fired ANFIS rules from their realised outcome.
+
+        Called at the start of every interval, *before* the new decision. The
+        ``self._pending`` buffer holds the microservice we last scaled and the
+        normalised rule firing strengths of that decision. We read the realised
+        response time of that microservice and the realised cumulative cost,
+        turn them into a normalised SLO error and a budget-pacing error, combine
+        them into a single control signal, and push it through
+        :meth:`ANFISEngine.adapt`. The reference (deadline + daily budget) is a
+        problem constraint, not another controller, so the loop tunes itself
+        against the true objective with no surrogate target.
+        """
+        pend = self._pending
+        if pend is None:
+            return
+        self._pending = None
+
+        replicas = [c for c in state.containers if c.con_type == pend["type"]]
+        realized_resp = max((c.aver_resptime for c in replicas), default=0.0)
+        if realized_resp <= 0.0:
+            return
+
+        e_slo = (realized_resp - self.adapt_beta * self.deadline) / max(self.deadline, 1e-6)
+        if self.budget_pacing and self.total_intervals > 0:
+            pace = min(1.0, max(0.0, state.slot_index / self.total_intervals))
+            e_cost = max(0.0, state.total_cost - self.budget_T * pace) / max(self.budget_T, 1e-6)
+        else:
+            e_cost = max(0.0, state.total_cost - self.budget_T) / max(self.budget_T, 1e-6)
+
+        signal = self.kappa_slo * e_slo - self.kappa_cost * e_cost
+        self.anfis.adapt(pend["firing_strengths"], signal)
+
+        cons = self.anfis.get_consequents()
+        self.learn_trace.append({
+            "slot": int(state.slot_index),
+            "type": int(pend["type"]),
+            "realized_resp": float(realized_resp),
+            "e_slo": float(e_slo),
+            "e_cost": float(e_cost),
+            "signal": float(signal),
+            "mean_s_dc": float(np.mean(cons["s_dc"])),
+            "mean_s_dn": float(np.mean(cons["s_dn"])),
+        })
+
     def act(self, state):
         """Return ``(con_id, vcpu_delta)`` or ``None`` (no-op) for this interval."""
         if not state.containers:
             return None
+
+        self._learn_from_outcome(state)
 
         by_type: dict[int, list] = {}
         for c in state.containers:
@@ -116,19 +177,19 @@ class NFGDiagScaleController:
         hours_remaining = max(0.0, (self.total_intervals - state.slot_index)) * self.interval_hours
         base_total_vcpu = sum(c.vcpu for c in state.containers)
 
-        # ---- 1-2. Forecast + fuzzify, pick the critical-path bottleneck ---- #
         best_type = None
         best_score = -1.0
         feats: dict[int, dict] = {}
         for t, replicas in by_type.items():
             cur_h = len(replicas)
             cur_c = max(1, int(round(np.mean([c.vcpu for c in replicas]))))
+            type_total_vcpu = float(sum(c.vcpu for c in replicas))
             et = float(state.proc_time.get(t, 0.0))
 
             observed = self._type_last_load(replicas)
             predicted_lam = self._forecaster(t).update(observed)
 
-            psi = queue_model.load_factor(predicted_lam, et, cur_c, cur_h, self.deadline)
+            psi = queue_model.load_factor_cwrr(predicted_lam, et, type_total_vcpu, self.deadline)
             max_resp = max((c.aver_resptime for c in replicas), default=0.0)
             lat_risk = max_resp / max(self.deadline, 1e-6)
             pressure = max(psi, lat_risk)
@@ -139,6 +200,7 @@ class NFGDiagScaleController:
                 "cur_h": cur_h, "cur_c": cur_c, "et": et, "lam": predicted_lam,
                 "psi": psi, "lat_risk": lat_risk, "pressure": pressure,
                 "max_resp": max_resp, "replicas": replicas,
+                "type_total_vcpu": type_total_vcpu,
             }
             if score > best_score:
                 best_score = score
@@ -148,7 +210,6 @@ class NFGDiagScaleController:
             return None
 
         f = feats[best_type]
-        # If nothing is under pressure, stay put (avoid cost-raising churn).
         if f["pressure"] < self.idle_pressure:
             return None
 
@@ -158,44 +219,39 @@ class NFGDiagScaleController:
         phi = float(np.clip((self.budget_T - state.total_cost) / max(self.budget_T, 1e-6), 0.0, 1.0))
         rho = 1.0 if (psi >= 1.0 or f["lat_risk"] >= 0.8) else 0.0
 
-        # ---- 3. NSGA-II magnitude optimization (Genetic) ------------------ #
-        type_vcpu = sum(c.vcpu for c in f["replicas"])
-        other_vcpu = base_total_vcpu - type_vcpu
         remaining_budget = self.budget_T - state.total_cost
         existing_vm_future = state.num_vms * self.vm_price * hours_remaining
         budget_room = max(0.0, remaining_budget * self.budget_safety - existing_vm_future)
 
-        h_star, c_star, _front = self.optimizer.optimize(
-            cur_h, cur_c, lam, et,
+        other_vcpu = base_total_vcpu - f["type_total_vcpu"]
+        h_star, c_star, _front = self.sizer.solve_exact(
+            cur_h, lam, et,
             base_total_vcpu=base_total_vcpu, other_vcpu=other_vcpu,
             vm_size=self.vm_size, vm_price_per_hr=self.vm_price,
             hours_remaining=hours_remaining, deadline=self.deadline,
             penalty=self.penalty, budget_room=budget_room,
         )
 
-        # ---- 4. ANFIS decision (Neuro-Fuzzy), biased by the checkpoint ---- #
         decision = self.anfis.decide(
             psi=psi, omega=omega, phi=phi, rho=rho,
-            n_current=cur_h, cores_current=cur_c, predicted_rps=lam,
-            ga_checkpoint=(h_star, c_star),
+            n_current=cur_h, cores_current=cur_c,
+            corrective=(h_star, c_star),
         )
+        self._pending = {"type": best_type,
+                         "firing_strengths": decision["firing_strengths"]}
+
         new_cores = cur_c + decision["delta_c"]
         new_replicas = cur_h + decision["delta_n"]
         target_total = new_replicas * new_cores
         delta_total = int(round(target_total - cur_h * cur_c))
-        # Fairness cap: clamp the per-decision resource change to STAR's action
-        # range res in [-m, +m] (m=4) so the comparison isolates the policy, not a
-        # wider action space (Fang et al., 2026).
         delta_total = int(np.clip(delta_total, -self.max_res, self.max_res))
         if delta_total == 0:
             return None
 
-        # ---- 5. Diagonal actuation + budget guard ------------------------- #
         if delta_total > 0:
             return self._scale_up(f["replicas"], delta_total, cur_c, budget_room, hours_remaining)
         return self._scale_down(f["replicas"], delta_total)
 
-    # ------------------------------------------------------------------ #
     def _scale_up(self, replicas, delta_total, replica_vcpu, budget_room, hours_remaining):
         """Apply a positive vCPU delta to the hottest replica (diagonal scaling).
 
@@ -208,11 +264,9 @@ class NFGDiagScaleController:
         target = max(replicas, key=lambda c: (c.aver_resptime, c.qlen))
         headroom = int(target.max_scal_vcpu)
         if delta_total > headroom:
-            # Overflow spawns at most one replica sized like the current ones.
             overflow = min(delta_total - headroom, max(self.min_cores, int(replica_vcpu)))
             new_vm_future_cost = self.vm_price * hours_remaining
             if budget_room < new_vm_future_cost:
-                # Cannot afford a new VM: take the free vertical headroom only.
                 delta_total = headroom
             else:
                 delta_total = headroom + overflow
@@ -223,10 +277,8 @@ class NFGDiagScaleController:
     def _scale_down(self, replicas, delta_total):
         """Apply a negative vCPU delta to the coldest replica (scale-in)."""
         target = min(replicas, key=lambda c: (c.aver_resptime, c.qlen))
-        # Never scale a single-vCPU container below its floor with no benefit.
         room_down = -(int(target.vcpu) - self.min_cores)
         if len(replicas) > 1:
-            # Allow removing an idle replica entirely.
             room_down = -int(target.vcpu)
         delta_total = max(delta_total, room_down)
         if delta_total >= 0:
