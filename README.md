@@ -1,16 +1,31 @@
-# Hybrid Cloud Auto-Scaling with NFG-DiagScale and Heterogeneous Containers
+# Hybrid Cloud Auto-Scaling with NF-DiagScale and Heterogeneous Containers
 
-This repository implements NFG-DiagScale (Neuro-Fuzzy-Genetic Diagonal Auto-Scaler) and integrates a comprehensive heterogeneous container simulation environment based on the HGraphScale paper.
+This repository implements NF-DiagScale (Neuro-Fuzzy Diagonal Scaler) and integrates a comprehensive heterogeneous container simulation environment based on the HGraphScale paper.
+
+> **Naming note.** The Python package directory is still called `nfg_diagscale/` (and the controller class `NFGDiagScaleController`) — the legacy `nfg_` prefix is retained for import stability. The architecture's canonical name is **NF-DiagScale**; the original genetic (NSGA-II) magnitude planner has been replaced by a *deterministic exact* queue-model sizer (see Feature 3).
 
 ---
 
 ## Key Features
 
-1. **Kalman + Holt Forecaster**: Per-container-type request-rate prediction using a Kalman filter (Kalman 1960) for RPS state estimation and Holt linear-trend exponential smoothing (Holt 1957) for the short-horizon ramp.
-2. **ANFIS Controller**: An inference-mode Takagi-Sugeno neuro-fuzzy engine (Jang 1993) mapping resource state and SLA risks directly into diagonal scaling instructions.
-3. **NSGA-II Genetic Trajectory Planner**: Multi-objective optimization (Deb et al. 2002) over the (replicas, cores) plane, minimizing SLA violations, instance cost, and rebalance actions across a rolling forecast horizon.
-4. **M/D/1 Queue Latency Model**: Closed-form per-microservice latency (Kleinrock 1975) that replaces NFG-DiagScale's original Themis look-up table.
+1. **Kalman + Holt Forecaster**: Per-microservice request-rate prediction using a Kalman filter (Kalman 1960) for RPS state estimation and Holt linear-trend exponential smoothing (Holt 1957) for the short-horizon ramp.
+2. **Adaptive ANFIS Controller**: A zero-order (singleton-consequent) Takagi-Sugeno neuro-fuzzy engine in the five-layer ANFIS arrangement (Jang 1993) that maps resource state and SLA risks into diagonal scaling instructions. Unlike a frozen inference engine, its rule consequents **self-tune online** from the realised SLO/cost outcome of the previous decision (direct adaptive fuzzy control; Wang 1993, MIT rule). The premise membership functions stay fixed so the fuzzy partition remains interpretable.
+3. **Deterministic Exact Magnitude Sizer**: A reproducible feedforward sizer that exhaustively enumerates the bounded `(replicas, vCPU)` grid and returns the globally-optimal, cost-feasible knee `(h*, c*)` (STAR Eq. 8) — minimizing predicted response time subject to the budget, independent of any RNG. It still exposes the non-dominated (Pareto) latency/cost/rebalance trade-off front for reporting. *(This replaces the earlier NSGA-II genetic planner.)*
+4. **M/D/1 Queue Latency Model**: Closed-form per-microservice latency (Kleinrock 1975) that replaces NF-DiagScale's original Themis look-up table.
 5. **Heterogeneous Container Simulation**: The HGraphScale environment with Physical Machines, Virtual Machines, Best-Fit placement heuristics, and Capacity-Weighted load distribution.
+
+---
+
+## Control Pipeline
+
+NF-DiagScale emits one scaling decision per 3-minute control interval through a six-stage closed loop:
+
+1. **Forecast (F)** — a Kalman+Holt forecaster predicts each microservice's next-interval request count from `workload_his`.
+2. **Fuzzify (F)** — four grounded inputs per microservice: load pressure `psi` (CWRR-weighted batch-drain time / deadline), SLO headroom `omega`, cost headroom `phi` (remaining budget fraction), and a binary risk flag `rho`. The DAG upward rank (HEFT; Topcuoglu 2002) weights pressure toward critical-path microservices.
+3. **Size** — the deterministic exact sizer returns the cost-feasible knee `(h*, c*)` that anchors the decision magnitude.
+4. **Decide (N)** — the adaptive ANFIS blends the deterministic anchor with its fuzzy output into `(mode, delta_c, delta_n)`.
+5. **Actuate (Diagonal)** — the target vCPU change is applied to the hottest replica; the simulator fills vertical headroom first and overflows into a new replica (vertical-first diagonal scaling). A budget guard blocks new-VM spawns that would breach the daily budget, keeping cost violation at zero.
+6. **Learn (online)** — at the next interval the controller reads the realised response time and cumulative cost, forms the SLO and budget-pacing errors, and adapts the fired ANFIS rules' singleton consequents.
 
 ---
 
@@ -46,7 +61,7 @@ pip install -r requirements.txt
 ```
 
 ### 2. Reproduce the STAR Comparison
-`run_star_comparison.py` drives the NFG-DiagScale controller through the HGraphScale
+`run_star_comparison.py` drives the NF-DiagScale controller through the HGraphScale
 environment on the nine STAR benchmark scenarios (NASA / Wikipedia / Alibaba x A11 / A12 / A13)
 and tabulates mean response time (MRT) and SLA-violation cost against STAR's reported Table 3:
 ```bash
@@ -82,8 +97,8 @@ Outputs are written to `reporting/figures/` (fig1-fig10) and `reporting/tables/`
 nfg_diagscale/
   config/            # default.yaml + loader (all hyperparameters)
   forecasting/       # Kalman filter (Kalman 1960)
-  hgraph_policy/     # controller, Holt forecaster, NSGA-II optimizer, M/D/1 queue model
-  decision/          # ANFIS engine + fuzzy rule base (Jang 1993)
+  hgraph_policy/     # controller, Holt forecaster, deterministic exact sizer, M/D/1 queue model
+  decision/          # adaptive ANFIS engine + fuzzy rule base (Jang 1993)
   hgraph_env/        # state adapter + vendored HGraphScale simulator under env/
     env/autoscaling_v1/
       dax/           # application DAGs (App_11..App_14.xml)
