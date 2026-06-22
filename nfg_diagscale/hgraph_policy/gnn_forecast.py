@@ -1,4 +1,4 @@
-"""GNN residual load forecaster (self-designed ablation).
+"""GNN residual load forecaster (core; default-on).
 
 Motivation. The baseline forecasts each microservice's load with an independent
 per-series Kalman+Holt filter, which is blind to the call graph: in a microservice
@@ -6,16 +6,18 @@ DAG a service's near-future load is largely driven by the *current* load of its
 upstream callers. This module adds a Graph Convolutional Network that predicts a
 *residual* correction to the per-series forecast by aggregating upstream observed
 load along the DAG. Because the correction is additive on top of the existing
-forecast, a GCN that learns ~zero residual reduces exactly to the baseline.
+forecast, a GCN that learns ~zero residual reduces exactly to the baseline; if no
+trained weights are present the controller transparently falls back to the
+Kalman+Holt forecast.
 
 Labels are free and require no counterfactual simulation: the target residual for
 interval ``k`` is simply ``realised_load[k+1] - kalman_forecast[k]`` per service,
-read straight from the next interval of any rollout.
+read straight from the next interval of any rollout (see ``train_forecast.py``).
 
 The graph convolution is the dense Kipf & Welling (2017) propagation with a
 *directed, upstream* adjacency (a node aggregates from its predecessors), so the
 message passing carries load forward along the invocation edges. No PyTorch
-Geometric dependency; torch is imported lazily so the recorder stays torch-free.
+Geometric dependency; torch is imported lazily so graph construction stays light.
 """
 from __future__ import annotations
 

@@ -1,15 +1,20 @@
-"""Train the GNN residual load forecaster from baseline rollouts.
+"""Train the core GNN residual load forecaster from baseline rollouts.
+
+The GNN residual corrector is part of the core controller
+(:mod:`nfg_diagscale.hgraph_policy.gnn_forecast`); this script regenerates its
+shipped weights (``nfg_diagscale/hgraph_policy/forecast_weights.pt``).
 
 Pipeline:
-  1. Run the controller in record mode (no GCN) on a workload-diverse calibration
-     set, buffering per-interval ``(graph, kalman_forecast, observed)``.
+  1. Run the controller in record mode with the GNN correction *disabled* on a
+     workload-diverse calibration set, buffering per-interval
+     ``(graph, kalman_forecast, observed)``.
   2. Build free residual labels: for each service the target at interval ``k`` is
      ``observed[k+1] - kalman_forecast[k]`` (the realisation of that forecast).
   3. Fit the two-layer GCN to the standardised residuals (MSE) and report the
      in-sample forecast-error reduction over the per-series baseline.
 
 Run from the repo root:
-    python -m ablations.rec3_gnn_forecast.train_forecast [--epochs 300 --hidden 16]
+    python train_forecast.py [--epochs 300 --hidden 16]
 """
 from __future__ import annotations
 
@@ -23,12 +28,12 @@ import numpy as np
 
 from nfg_diagscale.config import load_config
 from nfg_diagscale.hgraph_env.simulator import HGraphScaleEnv
+from nfg_diagscale.hgraph_policy import gnn_forecast
+from nfg_diagscale.hgraph_policy.controller import NFGDiagScaleController
 from run_star_comparison import BUDGET, DEADLINE, SCENARIOS
-from ablations.rec3_gnn_forecast.forecast_controller import GnnForecastController
-from ablations.rec3_gnn_forecast import gnn_forecast
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-WEIGHTS = os.path.join(HERE, "forecast_weights.pt")
+WEIGHTS = os.path.join(HERE, "nfg_diagscale", "hgraph_policy", "forecast_weights.pt")
 INTERVALS = 480
 CALIB_TAGS = ("N-13", "W-13", "A-13")
 
@@ -37,9 +42,11 @@ def _collect_one(task):
     tag, seed = task
     app, workload = SCENARIOS[tag]
     cfg = load_config()
+    # Disable the GNN correction so the recorded base forecast is raw Kalman+Holt.
+    cfg["forecast"] = {"gnn_residual": False}
     env = HGraphScaleEnv(app=app, workload=workload, seed=seed, budget=BUDGET)
     state = env.reset(test=True)
-    ctrl = GnnForecastController(cfg, deadline=DEADLINE, total_intervals=INTERVALS)
+    ctrl = NFGDiagScaleController(cfg, deadline=DEADLINE, total_intervals=INTERVALS)
     ctrl.reset(budget_T=BUDGET, total_intervals=INTERVALS)
     ctrl.record_on()
     done = False

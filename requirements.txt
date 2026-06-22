@@ -2,3 +2,5 @@ numpy>=1.24.0
 networkx>=3.0
 pyyaml>=6.0
 matplotlib>=3.5
+# GNN load-forecast residual corrector (core, default-on) and offline weight training.
+torch>=2.0

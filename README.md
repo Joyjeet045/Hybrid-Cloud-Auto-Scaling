@@ -8,7 +8,7 @@ This repository implements NF-DiagScale (Neuro-Fuzzy Diagonal Scaler) and integr
 
 ## Key Features
 
-1. **Kalman + Holt Forecaster**: Per-microservice request-rate prediction using a Kalman filter (Kalman 1960) for RPS state estimation and Holt linear-trend exponential smoothing (Holt 1957) for the short-horizon ramp.
+1. **Kalman + Holt Forecaster (+ GNN residual corrector)**: Per-microservice request-rate prediction using a Kalman filter (Kalman 1960) for RPS state estimation and Holt linear-trend exponential smoothing (Holt 1957) for the short-horizon ramp. A graph-aware residual corrector (a two-layer GCN, Kipf & Welling 2017) then adds a DAG-propagation correction learned from upstream load (`nfg_diagscale/hgraph_policy/gnn_forecast.py`); its labels are free (the realised next-interval load) and with no trained weights it is a no-op that falls back to the raw Kalman+Holt forecast. Retrain the shipped weights with `python train_forecast.py`.
 2. **Adaptive ANFIS Controller**: A zero-order (singleton-consequent) Takagi-Sugeno neuro-fuzzy engine in the five-layer ANFIS arrangement (Jang 1993) that maps resource state and SLA risks into diagonal scaling instructions. Unlike a frozen inference engine, its rule consequents **self-tune online** from the realised SLO/cost outcome of the previous decision (direct adaptive fuzzy control; Wang 1993, MIT rule). The premise membership functions stay fixed so the fuzzy partition remains interpretable.
 3. **Deterministic Exact Magnitude Sizer**: A reproducible feedforward sizer that exhaustively enumerates the bounded `(replicas, vCPU)` grid and returns the globally-optimal, cost-feasible knee `(h*, c*)` (STAR Eq. 8) — minimizing predicted response time subject to the budget, independent of any RNG. It still exposes the non-dominated (Pareto) latency/cost/rebalance trade-off front for reporting. *(This replaces the earlier NSGA-II genetic planner.)*
 4. **M/D/1 Queue Latency Model**: Closed-form per-microservice latency (Kleinrock 1975) that replaces NF-DiagScale's original Themis look-up table.
@@ -20,7 +20,7 @@ This repository implements NF-DiagScale (Neuro-Fuzzy Diagonal Scaler) and integr
 
 NF-DiagScale emits one scaling decision per 3-minute control interval through a six-stage closed loop:
 
-1. **Forecast (F)** — a Kalman+Holt forecaster predicts each microservice's next-interval request count from `workload_his`.
+1. **Forecast (F)** — a Kalman+Holt forecaster predicts each microservice's next-interval request count from `workload_his`, and a graph-aware GCN residual corrector adds a DAG-propagation correction from upstream load (no-op fallback to Kalman+Holt when no weights are present).
 2. **Fuzzify (F)** — four grounded inputs per microservice: load pressure `psi` (CWRR-weighted batch-drain time / deadline), SLO headroom `omega`, cost headroom `phi` (remaining budget fraction), and a binary risk flag `rho`. The DAG upward rank (HEFT; Topcuoglu 2002) weights pressure toward critical-path microservices.
 3. **Size** — the deterministic exact sizer returns the cost-feasible knee `(h*, c*)` that anchors the decision magnitude.
 4. **Decide (N)** — the adaptive ANFIS blends the deterministic anchor with its fuzzy output into `(mode, delta_c, delta_n)`.

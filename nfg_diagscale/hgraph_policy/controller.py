@@ -11,7 +11,10 @@ Pipeline (each interval):
 
 1. Forecast (F).  Per microservice, a Kalman+Holt forecaster
    (:class:`ContainerForecaster`) predicts next-interval request count from
-   ``workload_his`` (Kalman 1960; Holt 1957).
+   ``workload_his`` (Kalman 1960; Holt 1957). A graph-aware residual corrector
+   (:mod:`nfg_diagscale.hgraph_policy.gnn_forecast`, Kipf & Welling 2017) then
+   adds a DAG-propagation correction learned from upstream load; with no trained
+   weights it is a no-op and the raw Kalman+Holt forecast is used.
 
 2. Fuzzify (F).  Four grounded inputs per microservice:
      psi   = CWRR-weighted batch-drain time / deadline (load pressure; Eq. 15)
@@ -46,12 +49,16 @@ Pipeline (each interval):
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 from nfg_diagscale.decision.anfis import ANFISEngine
-from nfg_diagscale.hgraph_policy import queue_model
+from nfg_diagscale.hgraph_policy import gnn_forecast, queue_model
 from nfg_diagscale.hgraph_policy.forecaster import ContainerForecaster
 from nfg_diagscale.hgraph_policy.optimizer import MagnitudeSizer
+
+_DEFAULT_FORECAST_WEIGHTS = os.path.join(os.path.dirname(__file__), "forecast_weights.pt")
 
 
 class NFGDiagScaleController:
@@ -95,6 +102,17 @@ class NFGDiagScaleController:
         self.budget_T = float(config.get("cloud", {}).get("budget", 200.0))
         self._forecasters: dict[int, ContainerForecaster] = {}
 
+        # GNN load-forecast residual corrector (default-on; transparent fallback
+        # to the raw Kalman+Holt forecast when no trained weights are present).
+        fcfg = config.get("forecast", {})
+        self._fc_enabled = bool(fcfg.get("gnn_residual", True))
+        weights = fcfg.get("gnn_weights", _DEFAULT_FORECAST_WEIGHTS)
+        self._fc_model = None
+        self._fc_record: list | None = None
+        self._fc_cache: dict = {}
+        if self._fc_enabled and weights and os.path.exists(weights):
+            self._fc_model = gnn_forecast.ForecastGCN.load(weights)
+
         adp = config.get("adaptive", {})
         self.kappa_slo = float(adp.get("kappa_slo", 1.0))
         self.kappa_cost = float(adp.get("kappa_cost", 0.5))
@@ -108,6 +126,7 @@ class NFGDiagScaleController:
         if total_intervals is not None:
             self.total_intervals = int(total_intervals)
         self._forecasters = {}
+        self._fc_cache = {}
         self._pending = None
         self.learn_trace = []
         self.anfis.reset_consequents()
@@ -279,14 +298,68 @@ class NFGDiagScaleController:
         """
         return default_type
 
-    def _refine_forecast(self, con_type, predicted_lam, observed, state, by_type):
-        """Per-type load-forecast extension point.
+    def record_on(self):
+        """Start buffering per-interval forecast records for offline labelling.
 
-        The baseline returns the Kalman+Holt forecast unchanged. Pluggable
-        ablations (see the ``ablations`` package) override this to add a
-        graph-aware residual (e.g. propagating upstream load to downstream
-        services) without modifying the core control loop.
+        Used by ``train_forecast.py`` to collect free residual labels from a
+        baseline rollout (construct the controller with ``forecast.gnn_residual``
+        off so the recorded base is the raw Kalman+Holt forecast).
         """
+        self._fc_record = []
+
+    def pop_records(self):
+        """Return and clear the buffered forecast records."""
+        rec = self._fc_record if self._fc_record is not None else []
+        self._fc_record = None
+        return rec
+
+    def _build_interval_graph(self, state, by_type):
+        types = list(by_type.keys())
+        obs = {s: self._type_last_load(by_type[s]) for s in types}
+        et = {s: float(state.proc_time.get(s, 0.0)) for s in types}
+        vcpu = {s: float(sum(c.vcpu for c in by_type[s])) for s in types}
+        rank = {s: float(state.rank.get(s, 0.0)) for s in types}
+        return gnn_forecast.build_forecast_inputs(
+            types, obs, et, vcpu, rank, state.succ, self.deadline)
+
+    def _refine_forecast(self, con_type, predicted_lam, observed, state, by_type):
+        """Graph-aware residual correction on the per-type load forecast.
+
+        Adds the trained GCN's DAG-propagation residual to the Kalman+Holt
+        forecast (Kipf & Welling 2017 propagation on an upstream adjacency). With
+        no trained weights and no recording active this returns the baseline
+        forecast unchanged, so the controller degrades gracefully to Kalman+Holt.
+        When :meth:`record_on` is active it also buffers ``(graph, base, obs)``
+        per interval for offline label construction.
+        """
+        if self._fc_model is None and self._fc_record is None:
+            return predicted_lam
+
+        slot = int(state.slot_index)
+        cache = self._fc_cache
+        if cache.get("slot") != slot:
+            order, X, A_hat = self._build_interval_graph(state, by_type)
+            cache.clear()
+            cache["slot"] = slot
+            cache["order"] = order
+            cache["idx"] = {t: i for i, t in enumerate(order)}
+            cache["X"] = X
+            cache["A"] = A_hat
+            if self._fc_model is not None and len(order) > 0:
+                cache["resid"] = self._fc_model.predict(X, A_hat)
+            if self._fc_record is not None:
+                rec = {"order": order, "X": X, "A": A_hat, "base": {}, "obs": {}}
+                self._fc_record.append(rec)
+                cache["rec"] = rec
+
+        if self._fc_record is not None and "rec" in cache:
+            cache["rec"]["base"][int(con_type)] = float(predicted_lam)
+            cache["rec"]["obs"][int(con_type)] = float(observed)
+
+        if self._fc_model is not None:
+            i = cache["idx"].get(con_type)
+            if i is not None:
+                predicted_lam = max(0.0, float(predicted_lam) + float(cache["resid"][i]))
         return predicted_lam
 
     def _criticality_score(self, base_score, psi, rank_t, lat_risk, pressure):
