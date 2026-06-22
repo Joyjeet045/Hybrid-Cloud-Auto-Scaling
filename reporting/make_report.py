@@ -325,89 +325,6 @@ def fig_forecast(epi, cfg):
     return _save(fig, "fig4_forecast_accuracy.png")
 
 
-def fig_pareto(epi):
-    raw = [f for f in epi["fronts"] if len(f["front"]) >= 3]
-    if not raw:
-        print("  [warn] no Pareto fronts captured; skipping Pareto figure")
-        return None
-
-    def _interiorness(f):
-        """0 -> checkpoint at the fastest corner; 1 -> cheapest/slowest corner."""
-        cp = next((p for p in f["front"]
-                   if p[0] == f["h_star"] and p[1] == f["c_star"]), None)
-        if cp is None:
-            return None
-        lats = [p[2][0] for p in f["front"]]
-        lo, hi = min(lats), max(lats)
-        if hi <= lo:
-            return None
-        return (cp[2][0] - lo) / (hi - lo)
-
-    interior = [f for f in raw
-                if (r := _interiorness(f)) is not None and 0.15 <= r <= 0.85]
-    if interior:
-        rep = max(interior, key=lambda f: len(f["front"]))
-        binding = False
-    else:
-        rep = max(raw, key=lambda f: (len(f["front"]), f["lam"]))
-        binding = True
-
-    uniq = {}
-    for p in rep["front"]:
-        key = (p[0], p[1])
-        if key not in uniq or p[2][0] < uniq[key][2][0]:
-            uniq[key] = p
-    pts = sorted(uniq.values(), key=lambda p: p[2][1])
-    h = np.asarray([p[0] for p in pts], int)
-    c = np.asarray([p[1] for p in pts], int)
-    lat = np.asarray([p[2][0] for p in pts], float)
-    cost = np.asarray([p[2][1] for p in pts], float)
-    reb = np.asarray([p[2][2] for p in pts], float)
-    is_cp = np.asarray([(p[0] == rep["h_star"] and p[1] == rep["c_star"]) for p in pts])
-
-    fig, ax = plt.subplots(figsize=(7.8, 6))
-    ax.plot(cost, lat, color="#9e9e9e", lw=1.0, ls="--", zorder=2)
-    sc = ax.scatter(cost, lat, c=reb, cmap="viridis", s=85, edgecolor="k",
-                    linewidth=0.5, zorder=3)
-    fig.colorbar(sc, ax=ax, label="rebalance penalty (replica churn)")
-
-    if is_cp.any():
-        i = int(np.argmax(is_cp))
-        ax.scatter([cost[i]], [lat[i]], marker="*", s=440, color="#d32f2f",
-                   edgecolor="k", linewidth=0.8, zorder=5,
-                   label=f"selected checkpoint Eq.8 (h*={h[i]}, c*={c[i]})")
-
-    xspan = float(cost.max() - cost.min()) or 1.0
-    last_x = -1e18
-    for i in range(len(pts)):
-        if is_cp[i] or (cost[i] - last_x) < 0.08 * xspan:
-            continue
-        dy = 9 if (i % 2 == 0) else -13
-        ax.annotate(f"({h[i]},{c[i]})", (cost[i], lat[i]), fontsize=7.5,
-                    xytext=(5, dy), textcoords="offset points", color="#333")
-        last_x = cost[i]
-
-    if binding:
-        room = rep.get("budget_room", float("nan"))
-        msg = ("budget guard binding (room ${:.0f}): Eq.8 holds the\n"
-               "minimal-cost config to keep Vio=0".format(room)
-               if np.isfinite(room) else
-               "budget guard binding: Eq.8 holds the\nminimal-cost config to keep Vio=0")
-        ax.text(0.97, 0.05, msg, transform=ax.transAxes, fontsize=8,
-                va="bottom", ha="right",
-                bbox=dict(boxstyle="round,pad=0.4", fc="#fff8e1", ec="#ffb300"))
-
-    ax.set_xlabel("marginal VM cost (USD)")
-    ax.set_ylabel("predicted batch response time (ms)")
-    ax.set_title(f"Cost-latency sizing front (forecast load lam={rep['lam']:.0f} req/int)",
-                 loc="left")
-    if ax.get_legend_handles_labels()[0]:
-        ax.legend(loc="upper right")
-    fig.suptitle("Magnitude sizing: latency-cost trade-off (feedforward anchor)",
-                 fontsize=13, fontweight="bold")
-    return _save(fig, "fig5_pareto_front.png")
-
-
 def fig_membership():
     ranges = {"psi": (0.0, 3.0), "omega": (0.0, 1.0), "phi": (0.0, 1.0), "rho": (0.0, 1.0)}
     titles = {
@@ -711,7 +628,7 @@ def table_hyperparams(cfg):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rep", default="A-12", choices=SCEN_ORDER,
-                    help="Scenario instrumented for the trajectory/forecast/Pareto figures.")
+                    help="Scenario instrumented for the trajectory/forecast figures.")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--run-comparison", action="store_true",
                     help="Run the full 9-scenario sweep first (writes star_comparison_results.json).")
@@ -730,37 +647,35 @@ def main():
         subprocess.run([sys.executable, "-u", os.path.join(_REPO_ROOT, "run_star_comparison.py"),
                         "--seeds", str(args.seed), "--out", RESULTS_JSON], check=False)
 
-    print("\n[1/12] Workload traces (fig1)...")
+    print("\n[1/11] Workload traces (fig1)...")
     fig_workloads()
 
-    print(f"\n[2/12] Instrumented episode {args.rep} (powers fig3/fig4/fig5/fig9)...")
+    print(f"\n[2/11] Instrumented episode {args.rep} (powers fig3/fig4/fig9)...")
     epi = run_instrumented(args.rep, args.seed, cfg)
     print(f"      -> MRT {epi['mrt']:.1f} ms, cost ${epi['cost']:.1f}, "
           f"{epi['n']} intervals, {len(epi['fronts'])} sizing decisions")
 
-    print("\n[3/12] Control trajectory (fig3)...")
+    print("\n[3/11] Control trajectory (fig3)...")
     fig_trajectory(epi)
-    print("\n[4/12] Forecast accuracy (fig4)...")
+    print("\n[4/11] Forecast accuracy (fig4)...")
     fig_forecast(epi, cfg)
-    print("\n[5/12] Cost-latency sizing front (fig5)...")
-    fig_pareto(epi)
-    print("\n[6/12] ANFIS membership functions (fig6)...")
+    print("\n[5/11] ANFIS membership functions (fig6)...")
     fig_membership()
-    print("\n[7/12] ANFIS decision-mode breakdown (fig9)...")
+    print("\n[6/11] ANFIS decision-mode breakdown (fig9)...")
     fig_decision_modes(epi)
 
-    print("\n[8/12] Static tables (VM types, rule base, hyperparameters)...")
+    print("\n[7/11] Static tables (VM types, rule base, hyperparameters)...")
     table_vm_types()
     table_rule_base()
     table_hyperparams(cfg)
 
-    print("\n[9/12] MRT/Vio comparison vs STAR (table1 + fig2)...")
+    print("\n[8/11] MRT/Vio comparison vs STAR (table1 + fig2)...")
     comparison_artifacts()
-    print("\n[10/12] MRT reduction vs STAR (fig8)...")
+    print("\n[9/11] MRT reduction vs STAR (fig8)...")
     fig_mrt_reduction()
-    print("\n[11/12] App-14 comparison vs HGraphScale Table IV (table5 + fig7)...")
+    print("\n[10/11] App-14 comparison vs HGraphScale Table IV (table5 + fig7)...")
     a14_artifacts()
-    print("\n[12/12] Cost headroom vs budget (fig10)...")
+    print("\n[11/11] Cost headroom vs budget (fig10)...")
     fig_cost_headroom()
 
     print(f"\nDone. Figures -> {os.path.relpath(FIG_DIR, _REPO_ROOT)}/   "

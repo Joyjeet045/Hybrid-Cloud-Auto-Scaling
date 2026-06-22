@@ -1,0 +1,9 @@
+**NF-DiagScale vs each baseline (paired by scenario, MRT). Cliff's d < 0 favours NF-DiagScale; p two-sided.**
+
+| Baseline | Median MRT (ms) | NF wins | Wilcoxon p | Holm p | Cliff's d | Effect |
+| --- | --- | --- | --- | --- | --- | --- |
+| AWS-Scale | 864.6 | 9/9 | 0.0039 | 0.0195 | -1.000 | large |
+| DRPC | 415.5 | 9/9 | 0.0039 | 0.0195 | -0.951 | large |
+| DeepScale | 447.5 | 9/9 | 0.0039 | 0.0195 | -1.000 | large |
+| ProScale | 482.1 | 9/9 | 0.0039 | 0.0195 | -1.000 | large |
+| STAR | 288.9 | 9/9 | 0.0039 | 0.0195 | -0.802 | large |
