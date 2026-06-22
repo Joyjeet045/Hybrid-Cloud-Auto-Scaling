@@ -198,6 +198,7 @@ class NFGDiagScaleController:
 
             observed = self._type_last_load(replicas)
             predicted_lam = self._forecaster(t).update(observed)
+            predicted_lam = self._refine_forecast(t, predicted_lam, observed, state, by_type)
 
             psi = queue_model.load_factor_cwrr(predicted_lam, et, type_total_vcpu, self.deadline)
             max_resp = max((c.aver_resptime for c in replicas), default=0.0)
@@ -277,6 +278,16 @@ class NFGDiagScaleController:
         alternative selector without modifying the core control loop.
         """
         return default_type
+
+    def _refine_forecast(self, con_type, predicted_lam, observed, state, by_type):
+        """Per-type load-forecast extension point.
+
+        The baseline returns the Kalman+Holt forecast unchanged. Pluggable
+        ablations (see the ``ablations`` package) override this to add a
+        graph-aware residual (e.g. propagating upstream load to downstream
+        services) without modifying the core control loop.
+        """
+        return predicted_lam
 
     def _criticality_score(self, base_score, psi, rank_t, lat_risk, pressure):
         """Blend the legacy bottleneck score with a criticality priority (Rec 3).

@@ -63,5 +63,6 @@ _star_setup.txt
 # under ablations/. They are rebuilt on demand by each ablation's trainer.
 ablations/**/_records_*.pkl
 ablations/**/gnn_weights.pt
+ablations/**/*.pt
 _gnn_records_*.pkl
 nfg_diagscale/decision/gnn_weights.pt
