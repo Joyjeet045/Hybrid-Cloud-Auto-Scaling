@@ -82,6 +82,18 @@ class NFGDiagScaleController:
         self.budget_safety = float(ctrl.get("budget_safety", 0.97))
         self.max_res = int(ctrl.get("max_res", 4))
 
+        # Rec 3 (criticality-aware selection). crit_weight == 0 => legacy score.
+        crit = config.get("criticality", {})
+        self.crit_weight = float(crit.get("weight", 0.0))
+        self.crit_alpha = float(crit.get("alpha", 0.4))
+        self.crit_beta = float(crit.get("beta", 0.4))
+        self.crit_gamma = float(crit.get("gamma", 0.2))
+
+        # Rec 4 (root-cause dependency propagation). prop_weight == 0 => no change.
+        prop = config.get("propagation", {})
+        self.prop_weight = float(prop.get("weight", 0.0))
+        self.prop_hops = int(prop.get("hops", 1))
+
         self.budget_T = float(config.get("cloud", {}).get("budget", 200.0))
         self._forecasters: dict[int, ContainerForecaster] = {}
 
@@ -195,12 +207,14 @@ class NFGDiagScaleController:
             pressure = max(psi, lat_risk)
             rank_t = float(state.rank.get(t, 0.0))
             score = (0.5 + 0.5 * rank_t) * pressure
+            if self.crit_weight > 0.0:
+                score = self._criticality_score(score, psi, rank_t, lat_risk, pressure)
 
             feats[t] = {
                 "cur_h": cur_h, "cur_c": cur_c, "et": et, "lam": predicted_lam,
                 "psi": psi, "lat_risk": lat_risk, "pressure": pressure,
                 "max_resp": max_resp, "replicas": replicas,
-                "type_total_vcpu": type_total_vcpu,
+                "type_total_vcpu": type_total_vcpu, "rank": rank_t, "score": score,
             }
             if score > best_score:
                 best_score = score
@@ -208,6 +222,9 @@ class NFGDiagScaleController:
 
         if best_type is None:
             return None
+
+        if self.prop_weight > 0.0:
+            best_type = self._propagate_and_select(state, feats)
 
         f = feats[best_type]
         if f["pressure"] < self.idle_pressure:
@@ -251,6 +268,60 @@ class NFGDiagScaleController:
         if delta_total > 0:
             return self._scale_up(f["replicas"], delta_total, cur_c, budget_room, hours_remaining)
         return self._scale_down(f["replicas"], delta_total)
+
+    def _criticality_score(self, base_score, psi, rank_t, lat_risk, pressure):
+        """Blend the legacy bottleneck score with a criticality priority (Rec 3).
+
+        ``CS_i = alpha*C_i + beta*D_i + gamma*L_i`` with C = load demand (psi),
+        D = DAG centrality (HEFT upward rank), L = latency contribution; the
+        selection priority is ``Priority_i = CS_i * Risk_i`` with Risk = pressure.
+        The blend weight is ``crit_weight``; at ``crit_weight == 0`` this is never
+        called, so the legacy score is used verbatim.
+        """
+        c_i, d_i, l_i = psi, rank_t, lat_risk
+        cs = self.crit_alpha * c_i + self.crit_beta * d_i + self.crit_gamma * l_i
+        priority = cs * pressure
+        return (1.0 - self.crit_weight) * base_score + self.crit_weight * priority
+
+    def _propagate_and_select(self, state, feats):
+        """Re-select the bottleneck after upstream root-cause propagation (Rec 4).
+
+        Each service inherits a fraction (``prop_weight``) of the pressure of its
+        downstream DAG successors, so an upstream service that causes a downstream
+        SLA violation is scaled instead of the symptom. ``prop_hops`` controls how
+        many DAG levels are followed; contributions decay as ``1/depth`` so deeper
+        successors count less. At ``prop_hops == 1`` this is exact single-hop
+        inheritance. Only invoked when ``prop_weight > 0``; the baseline selection
+        is left untouched otherwise.
+        """
+        succ = getattr(state, "succ", {}) or {}
+        hops = self.prop_hops if self.prop_hops > 0 else 1
+        best_t, best_s = None, -1.0
+        for t, f in feats.items():
+            propagated = 0.0
+            seen = {t}
+            frontier = [t]
+            for depth in range(1, hops + 1):
+                nxt = []
+                for u in frontier:
+                    for s in succ.get(u, []):
+                        if s in seen:
+                            continue
+                        seen.add(s)
+                        nxt.append(s)
+                        sf = feats.get(s)
+                        if sf is not None:
+                            propagated += sf["pressure"] / depth
+                if not nxt:
+                    break
+                frontier = nxt
+            adj = f["score"] + self.prop_weight * propagated
+            if adj > best_s:
+                best_s = adj
+                best_t = t
+        if best_t is None:
+            return max(feats, key=lambda k: feats[k]["score"])
+        return best_t
 
     def _scale_up(self, replicas, delta_total, replica_vcpu, budget_room, hours_remaining):
         """Apply a positive vCPU delta to the hottest replica (diagonal scaling).

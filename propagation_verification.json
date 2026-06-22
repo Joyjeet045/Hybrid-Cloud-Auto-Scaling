@@ -1,0 +1,134 @@
+{
+  "criticality_fixed": {
+    "weight": 0.4,
+    "alpha": 0.4,
+    "beta": 0.4,
+    "gamma": 0.2
+  },
+  "reference_mean_mrt": 205.99848525849202,
+  "sweep": [
+    {
+      "weight": 0.0,
+      "hops": 1,
+      "mean_mrt": 205.99848525849202,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.01,
+      "hops": 1,
+      "mean_mrt": 206.83108290276553,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.02,
+      "hops": 1,
+      "mean_mrt": 207.91962792943002,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.05,
+      "hops": 1,
+      "mean_mrt": 212.89425418429497,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.1,
+      "hops": 1,
+      "mean_mrt": 214.317428002436,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.15,
+      "hops": 1,
+      "mean_mrt": 219.40255135208312,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.2,
+      "hops": 1,
+      "mean_mrt": 225.26945018242193,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.3,
+      "hops": 1,
+      "mean_mrt": 242.96046995546632,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.5,
+      "hops": 1,
+      "mean_mrt": 292.33067913472127,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.01,
+      "hops": 2,
+      "mean_mrt": 211.57873186225876,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.02,
+      "hops": 2,
+      "mean_mrt": 216.18703285850532,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.05,
+      "hops": 2,
+      "mean_mrt": 216.75573440666037,
+      "n_infeasible": 0
+    },
+    {
+      "weight": 0.1,
+      "hops": 2,
+      "mean_mrt": 216.1565580293495,
+      "n_infeasible": 0
+    }
+  ],
+  "verdict": "not_useful",
+  "per_scenario_help": {
+    "W-12": {
+      "weight": 0.01,
+      "hops": 1,
+      "mrt": 254.5514388062874,
+      "base_mrt": 261.5308483400535
+    },
+    "A-11": {
+      "weight": 0.01,
+      "hops": 1,
+      "mrt": 167.47171464155937,
+      "base_mrt": 169.09220668574125
+    },
+    "W-14": {
+      "weight": 0.01,
+      "hops": 1,
+      "mrt": 378.12077973132426,
+      "base_mrt": 383.111210214071
+    },
+    "A-12": {
+      "weight": 0.02,
+      "hops": 1,
+      "mrt": 159.86973423999706,
+      "base_mrt": 162.74100177787656
+    },
+    "W-11": {
+      "weight": 0.02,
+      "hops": 1,
+      "mrt": 226.25882409107697,
+      "base_mrt": 229.336074221559
+    },
+    "A-14": {
+      "weight": 0.05,
+      "hops": 1,
+      "mrt": 224.1658904156507,
+      "base_mrt": 224.88963831308067
+    },
+    "N-14": {
+      "weight": 0.1,
+      "hops": 1,
+      "mrt": 247.51219214404898,
+      "base_mrt": 249.87038385015006
+    }
+  }
+}

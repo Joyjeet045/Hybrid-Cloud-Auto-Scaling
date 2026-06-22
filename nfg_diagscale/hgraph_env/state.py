@@ -56,6 +56,7 @@ class CloudState:
     num_vms: int = 0
     rank: dict[int, float] = field(default_factory=dict)
     proc_time: dict[int, float] = field(default_factory=dict)
+    succ: dict[int, list[int]] = field(default_factory=dict)
 
     @property
     def cost_headroom(self) -> float:
@@ -113,6 +114,25 @@ def get_static_rank(sim) -> dict[int, float]:
     return rank
 
 
+def get_static_succ(sim) -> dict[int, list[int]]:
+    """Static DAG successor list per microservice id, cached on ``sim``.
+
+    Exposes the application DAG's downstream invocation edges so the controller
+    can optionally propagate pressure from a node to its dependants (Rec 4,
+    root-cause-aware scaling). Read-only and unused unless propagation is enabled.
+    """
+    cached = getattr(sim, "_nfg_static_succ", None)
+    if cached is not None:
+        return cached
+    dag = sim.set.dataset.wset[0]
+    if hasattr(dag, "successors"):
+        succ = {n: list(dag.successors(n)) for n in dag.nodes()}
+    else:
+        succ = {}
+    sim._nfg_static_succ = succ
+    return succ
+
+
 def get_static_proc_time(sim) -> dict[int, float]:
     """Base processing time (``processTime``, ms) per microservice id, cached.
 
@@ -133,6 +153,7 @@ def extract_state(sim) -> CloudState:
     """Build a :class:`CloudState` from a live ``cloud_simulator`` instance."""
     rank = get_static_rank(sim)
     proc_time = get_static_proc_time(sim)
+    succ = get_static_succ(sim)
 
     containers: list[ContainerState] = []
     for con_id, con in sim.con_queues.items():
@@ -168,4 +189,5 @@ def extract_state(sim) -> CloudState:
         num_vms=num_vms,
         rank=rank,
         proc_time=proc_time,
+        succ=succ,
     )

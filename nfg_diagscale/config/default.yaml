@@ -43,3 +43,26 @@ controller:
   idle_pressure: 0.25
   budget_safety: 0.97
   max_res: 4
+
+# Rec 3 (criticality-aware selection). Tuned via tune_hyperparams.py: weight=0.4
+# with the balanced (alpha=beta=0.4, gamma=0.2) preset gave the most robust MRT
+# gain (~-8 ms on both the train and held-out scenario splits, Vio=0 preserved).
+# weight == 0 reproduces the legacy bottleneck score `(0.5 + 0.5*rank)*pressure`.
+# Priority_i = CS_i * Risk_i with CS_i = alpha*C_i + beta*D_i + gamma*L_i
+# (C=load demand, D=DAG centrality, L=latency contribution).
+criticality:
+  weight: 0.4
+  alpha: 0.4
+  beta: 0.4
+  gamma: 0.2
+
+# Rec 4 (root-cause dependency propagation). Disabled. A full weight x hops
+# sweep (verify_propagation.py, 156 episodes over all 12 scenarios) shows every
+# weight > 0 raises mean MRT monotonically (+0.8 ms at 0.01 up to +86 ms at 0.5,
+# Vio always 0), and hops=2 is worse still: an upstream node inheriting
+# downstream pressure pulls scaling away from the true bottleneck. The handful of
+# tiny per-scenario wins each need a different weight and never net positive.
+# Kept for completeness; weight == 0 leaves selection identical to baseline.
+propagation:
+  weight: 0.0
+  hops: 1
