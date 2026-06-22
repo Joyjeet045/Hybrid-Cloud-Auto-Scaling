@@ -1,20 +1,26 @@
-"""Derivative-free auto-tuning of the ANFIS Gaussian membership functions.
+"""Robust, validation-selected auto-tuning of a *context-scheduled* fuzzy partition.
 
-A (1+lambda) evolution strategy searches the centre/width of every fuzzy term in
-``psi``, ``omega`` and ``phi`` (``rho`` is a fixed binary anchor) to minimise the
-mean closed-loop MRT over a small, workload-diverse calibration set, subject to a
-hard zero-violation constraint (cost overruns are penalised heavily). The search
-is:
+This is the upgraded rec4 ("final approach"). It combines four changes over the
+original static (1+lambda)-ES tuner, each targeting why the static version
+overfit the calibration set and failed to generalise:
 
-  * seeded at the expert ``LINGUISTIC_TERMS`` (the incumbent at generation 0),
-  * elitist -- the incumbent is re-evaluated every generation and only replaced by
-    a strictly better candidate, so the returned design can never be worse than the
-    hand-tuned baseline on the calibration scenarios, and
-  * monotone-decoded -- term centres stay ordered (low < moderate < ...) so the
-    linguistic partition, and therefore the rule base, stays valid.
+  (A) Robust objective -- minimise *relative regret vs the expert baseline*, with a
+      worst-case (minimax) term, so a design that blows up any scenario is rejected
+      even if it wins others. (Kills the static tuner's high-variance tail.)
+  (B) Train/validation split -- the search is ranked on a TRAIN set but the returned
+      design is selected by its score on a disjoint VALIDATION set (model selection /
+      early stopping), so we keep the design that *generalises*, not the one that
+      best fits the training scenarios.
+  (C) Context-scheduled membership functions -- the genome encodes a static base
+      partition (20 params) plus six per-variable load-schedule gains, so the
+      partition self-adapts to the operating point instead of being a single static
+      compromise. See :mod:`scheduled_anfis`.
+  (D) Separable CMA-ES -- a covariance-adapting evolution strategy (Ros & Hansen,
+      2008) replaces the fixed-sigma (1+lambda)-ES for better sample efficiency in
+      the larger search space.
 
-The tuned design is written to ``mf_terms.json`` next to this file; evaluate.py
-loads it for the held-out 12-scenario comparison.
+The expert design (base = expert terms, gains = 0) is always evaluated, so the
+returned design is never worse than the expert on the validation set.
 
 Run from the repo root:
     python -m ablations.rec4_mf_autotune.autotune --workers 12
@@ -36,19 +42,43 @@ from nfg_diagscale.config import load_config
 from nfg_diagscale.decision.fuzzy_rules import LINGUISTIC_TERMS
 from nfg_diagscale.hgraph_env.simulator import HGraphScaleEnv
 from run_star_comparison import BUDGET, DEADLINE, SCENARIOS
-from ablations.rec4_mf_autotune.optimized_controller import OptimizedMFController
+from ablations.rec4_mf_autotune.scheduled_controller import ScheduledMFController
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TERMS_PATH = os.path.join(HERE, "mf_terms.json")
 INTERVALS = 480
+
 VARS = ("psi", "omega", "phi")
 DOMAIN = {"psi": (0.3, 3.0), "omega": (0.08, 1.0), "phi": (0.03, 1.0)}
-CALIB_TAGS = ("N-13", "W-13", "A-13")
-VIO_PENALTY = 1.0e5
+
+# Schedule signal g = clip((psi - G_LO)/(G_HI - G_LO), 0, 1).
+G_LO, G_HI = 0.4, 1.6
+GAIN_MAX = 0.6
+
+# (A) robust objective weights and (B) the train/validation split.
+LAMBDA_TAIL = 1.0
+VIO_PENALTY = 1.0e3
+# Capacity control: L2 pull on the schedule gains toward 0 (expert), so the search
+# only deviates from the expert partition where it robustly helps -- the key fix for
+# the over-fitting seen with the full 26-parameter design.
+REG_COEF = 0.05
+TRAIN_TAGS = ("N-13", "W-13", "A-13")
+VAL_TAGS = ("N-11", "W-12", "A-14")
+
+# Expert baseline (main, seed 0) -- the regret reference.
+BASELINE = {
+    "N-11": 152.91, "N-12": 157.39, "N-13": 140.52,
+    "W-11": 229.34, "W-12": 261.53, "W-13": 210.52,
+    "A-11": 169.09, "A-12": 162.74, "A-13": 130.07,
+    "N-14": 249.87, "W-14": 383.11, "A-14": 224.89,
+}
 
 
+# --------------------------------------------------------------------------- #
+# Genome <-> design                                                            #
+# --------------------------------------------------------------------------- #
 def build_params():
-    """Flat list of optimisable terms in canonical order with expert seeds."""
+    """Flat list of the static membership terms in canonical order (expert seeds)."""
     params = []
     for var in VARS:
         for term, (center, sigma) in LINGUISTIC_TERMS[var].items():
@@ -57,12 +87,11 @@ def build_params():
     return params
 
 
-def decode(theta, params):
-    """Map a normalised parameter vector to a valid, monotone terms dict."""
+def _decode_static(theta_static, params):
+    """Map the static block to a valid, monotone base-terms dict."""
     by_var = OrderedDict()
     for k, p in enumerate(params):
         by_var.setdefault(p["var"], []).append((k, p))
-
     terms = {}
     for var, items in by_var.items():
         lo, hi = DOMAIN[var]
@@ -71,8 +100,8 @@ def decode(theta, params):
         prev = lo
         out = {}
         for j, (k, p) in enumerate(items):
-            tc = float(np.clip(theta[2 * k], 0.5, 1.8))
-            ts = float(np.clip(theta[2 * k + 1], 0.5, 2.0))
+            tc = float(np.clip(theta_static[2 * k], 0.5, 1.8))
+            ts = float(np.clip(theta_static[2 * k + 1], 0.5, 2.0))
             center = p["c0"] * tc
             upper = hi - gap * (n - 1 - j)
             center = min(max(center, prev + gap), upper)
@@ -84,20 +113,38 @@ def decode(theta, params):
     return terms
 
 
-def expert_terms():
-    return {var: {term: [float(c), float(s)]
-                  for term, (c, s) in LINGUISTIC_TERMS[var].items()}
-            for var in VARS}
+def decode_design(theta, params):
+    """Map a full genome to a context-scheduled design dict.
+
+    Genome layout: [static multipliers (2 per term) | schedule gains (gc, gs per var)].
+    Seed ``theta = [1]*static + [0]*gains`` reproduces the expert partition exactly.
+    """
+    n_static = 2 * len(params)
+    base = _decode_static(theta[:n_static], params)
+    raw = theta[n_static:]
+    gains = {}
+    for i, var in enumerate(VARS):
+        gc = float(np.clip(raw[2 * i], -GAIN_MAX, GAIN_MAX))
+        gs = float(np.clip(raw[2 * i + 1], -GAIN_MAX, GAIN_MAX))
+        gains[var] = [gc, gs]
+    return {"base_terms": base, "gains": gains, "g_lo": G_LO, "g_hi": G_HI}
 
 
+def seed_genome(params):
+    return np.concatenate([np.ones(2 * len(params)), np.zeros(2 * len(VARS))])
+
+
+# --------------------------------------------------------------------------- #
+# Parallel rollout evaluation + robust objective                              #
+# --------------------------------------------------------------------------- #
 def _eval_one(task):
-    cand_id, tag, terms, seed = task
+    cand_id, tag, design, seed = task
     app, workload = SCENARIOS[tag]
     cfg = load_config()
-    cfg["fuzzify"] = {"optimized_mf": True, "mf_terms": terms}
+    cfg["fuzzify"] = {"scheduled_mf": True, "design": design}
     env = HGraphScaleEnv(app=app, workload=workload, seed=seed, budget=BUDGET)
     state = env.reset(test=True)
-    ctrl = OptimizedMFController(cfg, deadline=DEADLINE, total_intervals=INTERVALS)
+    ctrl = ScheduledMFController(cfg, deadline=DEADLINE, total_intervals=INTERVALS)
     ctrl.reset(budget_T=BUDGET, total_intervals=INTERVALS)
     done = False
     info = {}
@@ -110,91 +157,223 @@ def _eval_one(task):
     return cand_id, tag, mrt, max(0.0, cost - BUDGET)
 
 
-def evaluate_population(terms_list, calib_tags, seed, workers):
-    """Return (score, mean_mrt, total_vio) per candidate via a parallel pool."""
+def evaluate_population(designs, tags, seed, workers):
+    """Roll out every design on every tag; return per-design {tag: (mrt, vio)}."""
     tasks = []
-    for ci, terms in enumerate(terms_list):
-        for tag in calib_tags:
-            tasks.append((ci, tag, terms, seed))
-    agg = {ci: {"mrt": [], "vio": 0.0} for ci in range(len(terms_list))}
+    for ci, design in enumerate(designs):
+        for tag in tags:
+            tasks.append((ci, tag, design, seed))
+    out = {ci: {} for ci in range(len(designs))}
     with ProcessPoolExecutor(max_workers=workers) as ex:
         for ci, tag, mrt, vio in ex.map(_eval_one, tasks):
-            agg[ci]["mrt"].append(mrt)
-            agg[ci]["vio"] += vio
-    out = []
-    for ci in range(len(terms_list)):
-        mean_mrt = float(np.mean(agg[ci]["mrt"]))
-        total_vio = float(agg[ci]["vio"])
-        score = mean_mrt + VIO_PENALTY * total_vio
-        out.append((score, mean_mrt, total_vio))
+            out[ci][tag] = (mrt, vio)
     return out
 
 
-def autotune(workers, seed, gens, popsize, sigma0, calib_tags):
+def robust_score(per_tag, tags):
+    """(A) mean + worst-case relative regret vs expert, plus a hard vio penalty."""
+    regrets = []
+    vio_total = 0.0
+    for t in tags:
+        mrt, vio = per_tag[t]
+        regrets.append((mrt - BASELINE[t]) / BASELINE[t])
+        vio_total += vio
+    regrets = np.asarray(regrets)
+    mean_reg = float(np.mean(regrets))
+    worst_reg = float(np.max(regrets))
+    score = mean_reg + LAMBDA_TAIL * worst_reg + VIO_PENALTY * vio_total
+    return score, mean_reg, worst_reg, vio_total
+
+
+# --------------------------------------------------------------------------- #
+# (D) Separable CMA-ES                                                         #
+# --------------------------------------------------------------------------- #
+class SepCMAES:
+    """Minimal separable (diagonal-covariance) CMA-ES (Ros & Hansen, 2008)."""
+
+    def __init__(self, x0, sigma0, popsize, seed):
+        self.dim = len(x0)
+        self.mean = np.asarray(x0, dtype=float)
+        self.sigma = float(sigma0)
+        self.lam = int(popsize)
+        self.rng = np.random.default_rng(seed)
+
+        mu = self.lam // 2
+        w = np.log(mu + 0.5) - np.log(np.arange(1, mu + 1))
+        w /= np.sum(w)
+        self.weights = w
+        self.mu = mu
+        self.mu_eff = 1.0 / np.sum(w ** 2)
+
+        d = self.dim
+        self.cc = (4 + self.mu_eff / d) / (d + 4 + 2 * self.mu_eff / d)
+        self.cs = (self.mu_eff + 2) / (d + self.mu_eff + 5)
+        # separable acceleration factor on the rank-1 / rank-mu learning rates
+        accel = (d + 2) / 3.0
+        self.c1 = accel * 2.0 / ((d + 1.3) ** 2 + self.mu_eff)
+        self.cmu = accel * min(
+            1 - self.c1,
+            2 * (self.mu_eff - 2 + 1 / self.mu_eff) / ((d + 2) ** 2 + self.mu_eff),
+        )
+        self.damps = 1 + 2 * max(0.0, np.sqrt((self.mu_eff - 1) / (d + 1)) - 1) + self.cs
+        self.chiN = np.sqrt(d) * (1 - 1 / (4 * d) + 1 / (21 * d ** 2))
+
+        self.pc = np.zeros(d)
+        self.ps = np.zeros(d)
+        self.C = np.ones(d)          # diagonal covariance
+        self.gen = 0
+
+    def ask(self):
+        self.gen += 1
+        std = np.sqrt(self.C)
+        self.z = self.rng.standard_normal((self.lam, self.dim))
+        self.y = self.z * std                                  # ~ N(0, C)
+        return self.mean + self.sigma * self.y
+
+    def tell(self, fitness):
+        idx = np.argsort(fitness)
+        y_sel = self.y[idx[: self.mu]]
+        z_sel = self.z[idx[: self.mu]]
+        y_w = self.weights @ y_sel
+        z_w = self.weights @ z_sel
+
+        self.ps = (1 - self.cs) * self.ps + \
+            np.sqrt(self.cs * (2 - self.cs) * self.mu_eff) * z_w
+        ps_norm = float(np.linalg.norm(self.ps))
+        hs = 1.0 if ps_norm / np.sqrt(
+            1 - (1 - self.cs) ** (2 * self.gen)) < (1.4 + 2 / (self.dim + 1)) * self.chiN else 0.0
+        self.pc = (1 - self.cc) * self.pc + \
+            hs * np.sqrt(self.cc * (2 - self.cc) * self.mu_eff) * y_w
+
+        delta_hs = (1 - hs) * self.cc * (2 - self.cc)
+        rank_mu = self.weights @ (y_sel ** 2)
+        self.C = (1 - self.c1 - self.cmu) * self.C \
+            + self.c1 * (self.pc ** 2 + delta_hs * self.C) \
+            + self.cmu * rank_mu
+        self.C = np.maximum(self.C, 1e-10)
+
+        self.sigma *= np.exp((self.cs / self.damps) * (ps_norm / self.chiN - 1))
+        self.sigma = float(np.clip(self.sigma, 1e-4, 1.0))
+        self.mean = self.mean + self.weights @ (self.sigma * y_sel)
+
+
+# --------------------------------------------------------------------------- #
+# Search driver                                                               #
+# --------------------------------------------------------------------------- #
+def _gain_l2(design):
+    return float(np.mean([g ** 2 for v in VARS for g in design["gains"][v]]))
+
+
+def autotune(workers, seed, gens, popsize, sigma0, train_tags, val_tags,
+             schedule_only=True):
     params = build_params()
-    dim = 2 * len(params)
-    rng = np.random.default_rng(seed)
+    all_tags = list(train_tags) + list(val_tags)
 
-    incumbent = np.ones(dim)
-    incumbent_terms = decode(incumbent, params)
-    s0, m0, v0 = evaluate_population([incumbent_terms], calib_tags, seed, workers)[0]
-    best_score, best_mrt, best_vio = s0, m0, v0
-    print(f"[gen 0] expert seed: mean_mrt={m0:.3f} vio={v0:.3f} score={s0:.3f}")
+    if schedule_only:
+        # Genome = the 6 schedule gains only; base partition frozen at expert.
+        n_static = 2 * len(params)
+        x0 = np.zeros(2 * len(VARS))
 
-    sigma = sigma0
+        def to_design(theta):
+            return decode_design(np.concatenate([np.ones(n_static), theta]), params)
+    else:
+        x0 = seed_genome(params)
+
+        def to_design(theta):
+            return decode_design(theta, params)
+
+    # Expert is always in the running -- guarantees no-harm on validation.
+    expert_design = to_design(x0)
+    res = evaluate_population([expert_design], all_tags, seed, workers)[0]
+    _, e_tr_mean, e_tr_worst, _ = robust_score(res, train_tags)
+    e_val_score, e_val_mean, e_val_worst, e_val_vio = robust_score(res, val_tags)
+    print(f"[gen 0] expert: train mean_reg={e_tr_mean:+.4f} worst={e_tr_worst:+.4f} "
+          f"| val score={e_val_score:+.4f} mean={e_val_mean:+.4f} worst={e_val_worst:+.4f}")
+
+    best = {"design": expert_design, "val_score": e_val_score,
+            "val_mean": e_val_mean, "val_worst": e_val_worst, "val_vio": e_val_vio,
+            "per_tag": res}
+
+    es = SepCMAES(x0, sigma0, popsize, seed)
     for g in range(1, gens + 1):
-        cands = [incumbent.copy()]
-        for _ in range(popsize - 1):
-            cands.append(incumbent + sigma * rng.standard_normal(dim))
-        terms_list = [decode(c, params) for c in cands]
-        scored = evaluate_population(terms_list, calib_tags, seed, workers)
-        order = sorted(range(len(cands)), key=lambda i: scored[i][0])
-        bi = order[0]
-        if scored[bi][0] < best_score - 1e-9:
-            best_score, best_mrt, best_vio = scored[bi]
-            incumbent = cands[bi].copy()
-            incumbent_terms = terms_list[bi]
-            tag = "  <- new incumbent"
-        else:
-            tag = ""
-        print(f"[gen {g}] best_cand mean_mrt={scored[bi][1]:.3f} "
-              f"vio={scored[bi][2]:.3f} | incumbent mean_mrt={best_mrt:.3f}"
-              f" sigma={sigma:.3f}{tag}")
-        sigma *= 0.82
+        thetas = es.ask()
+        designs = [to_design(th) for th in thetas]
+        results = evaluate_population(designs, all_tags, seed, workers)
 
-    return incumbent_terms, best_mrt, best_vio
+        train_fit = np.empty(len(designs))
+        for ci in range(len(designs)):
+            sc, _, _, _ = robust_score(results[ci], train_tags)
+            train_fit[ci] = sc + REG_COEF * _gain_l2(designs[ci])
+
+        # (B) select the incumbent by validation score (feasible designs first).
+        for ci in range(len(designs)):
+            v_score, v_mean, v_worst, v_vio = robust_score(results[ci], val_tags)
+            better = (v_vio == 0 and best["val_vio"] > 0) or \
+                     (v_vio == best["val_vio"] and v_score < best["val_score"] - 1e-9)
+            if better:
+                best = {"design": designs[ci], "val_score": v_score,
+                        "val_mean": v_mean, "val_worst": v_worst, "val_vio": v_vio,
+                        "per_tag": results[ci]}
+
+        es.tell(train_fit)
+        bi = int(np.argmin(train_fit))
+        _, b_mean, b_worst, _ = robust_score(results[bi], train_tags)
+        print(f"[gen {g}] train best mean_reg={b_mean:+.4f} worst={b_worst:+.4f} "
+              f"sigma={es.sigma:.3f} | incumbent val score={best['val_score']:+.4f} "
+              f"mean={best['val_mean']:+.4f} worst={best['val_worst']:+.4f}")
+
+    return best, params
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--gens", type=int, default=5)
+    ap.add_argument("--gens", type=int, default=6)
     ap.add_argument("--popsize", type=int, default=8)
-    ap.add_argument("--sigma0", type=float, default=0.18)
+    ap.add_argument("--sigma0", type=float, default=0.25)
+    ap.add_argument("--full", action="store_true",
+                    help="optimise the full 26-param design (base + gains); "
+                         "default is schedule-only (base frozen at expert, 6 gains)")
     ap.add_argument("--quick", action="store_true",
-                    help="tiny budget for a plumbing smoke test")
+                    help="tiny smoke run (2 gens, popsize 4, 1 train/1 val tag)")
     args = ap.parse_args()
 
+    train_tags, val_tags = TRAIN_TAGS, VAL_TAGS
     gens, popsize = args.gens, args.popsize
     if args.quick:
         gens, popsize = 2, 4
+        train_tags, val_tags = ("A-13",), ("A-14",)
 
-    print(f"Auto-tuning MF on {list(CALIB_TAGS)}  gens={gens} popsize={popsize} "
-          f"workers={args.workers}")
-    terms, mrt, vio = autotune(args.workers, args.seed, gens, popsize,
-                               args.sigma0, CALIB_TAGS)
-    payload = {
-        "calib_tags": list(CALIB_TAGS),
+    schedule_only = not args.full
+    mode = "schedule-only" if schedule_only else "full"
+    print(f"Scheduled-MF auto-tune [{mode}]  train={list(train_tags)} "
+          f"val={list(val_tags)} gens={gens} popsize={popsize} workers={args.workers}")
+    best, _ = autotune(args.workers, args.seed, gens, popsize, args.sigma0,
+                       train_tags, val_tags, schedule_only=schedule_only)
+
+    design = best["design"]
+    out = {
+        "schema": "scheduled-v2",
+        "mode": mode,
+        "train_tags": list(train_tags),
+        "val_tags": list(val_tags),
         "seed": args.seed,
-        "calib_mean_mrt": mrt,
-        "calib_total_vio": vio,
-        "mf_terms": terms,
+        "val_mean_regret": best["val_mean"],
+        "val_worst_regret": best["val_worst"],
+        "val_total_vio": best["val_vio"],
+        "g_lo": G_LO,
+        "g_hi": G_HI,
+        "base_terms": design["base_terms"],
+        "gains": design["gains"],
     }
-    with open(TERMS_PATH, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, indent=2)
-    print(f"\nSaved tuned MFs -> {TERMS_PATH}")
-    print(f"calibration mean MRT: {mrt:.3f}  (total vio {vio:.3f})")
+    with open(TERMS_PATH, "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=2)
+    print(f"\nSaved scheduled design -> {TERMS_PATH}")
+    print(f"validation mean regret {best['val_mean']:+.4f}  "
+          f"worst {best['val_worst']:+.4f}  vio {best['val_vio']:.3f}")
+    print("gains: " + "  ".join(f"{v}=(gc {design['gains'][v][0]:+.3f}, "
+                                f"gs {design['gains'][v][1]:+.3f})" for v in VARS))
 
 
 if __name__ == "__main__":
