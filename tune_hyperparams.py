@@ -29,22 +29,20 @@ from concurrent.futures import ProcessPoolExecutor
 from nfg_diagscale.config import load_config
 from run_star_comparison import run_scenario
 
-# Larger apps across all three workloads (more headroom to differ from baseline).
 TRAIN = ["N-12", "N-13", "W-12", "W-13", "A-12", "A-13"]
-# Untouched during the search; used only to check the winner generalises.
 HELDOUT = ["N-11", "W-11", "A-11", "N-14", "W-14", "A-14"]
 
-INFEASIBLE_PENALTY = 1.0e6  # any cost violation makes a config inadmissible
+INFEASIBLE_PENALTY = 1.0e6
 
 
 def make_grid():
     """Return the list of {section: overrides} dicts to evaluate."""
     crit_settings = [
-        {"weight": 0.0, "alpha": 0.4, "beta": 0.4, "gamma": 0.2},  # criticality off (baseline)
-        {"weight": 0.4, "alpha": 0.4, "beta": 0.4, "gamma": 0.2},  # balanced
-        {"weight": 0.4, "alpha": 0.2, "beta": 0.6, "gamma": 0.2},  # centrality-heavy
-        {"weight": 0.7, "alpha": 0.2, "beta": 0.6, "gamma": 0.2},  # centrality-heavy, strong
-        {"weight": 0.7, "alpha": 0.5, "beta": 0.3, "gamma": 0.2},  # load-heavy, strong
+        {"weight": 0.0, "alpha": 0.4, "beta": 0.4, "gamma": 0.2},
+        {"weight": 0.4, "alpha": 0.4, "beta": 0.4, "gamma": 0.2},
+        {"weight": 0.4, "alpha": 0.2, "beta": 0.6, "gamma": 0.2},
+        {"weight": 0.7, "alpha": 0.2, "beta": 0.6, "gamma": 0.2},
+        {"weight": 0.7, "alpha": 0.5, "beta": 0.3, "gamma": 0.2},
     ]
     prop_weights = [0.0, 0.35, 0.7]
     grid = []
@@ -117,7 +115,6 @@ def main():
           f"= {len(grid) * len(TRAIN)} episodes on {args.workers} workers")
     print("=" * 88)
 
-    # --- TRAIN: rank configurations -------------------------------------------
     train_raw = evaluate(grid, TRAIN, args.workers, args.seed)
     ranked = []
     for ci, ov in enumerate(grid):
@@ -136,7 +133,6 @@ def main():
         flag = "  INFEASIBLE" if ninf else ""
         print(f"{rank:>2}. {mean_mrt:8.3f} ms  (dMRT {delta:+7.3f}){flag}   {fmt_cfg(ov)}")
 
-    # --- VALIDATION: best K + baseline on the held-out scenarios ---------------
     top_cis = [r[3] for r in ranked[:args.top] if r[2] == 0]
     val_cis = list(dict.fromkeys([base_ci] + top_cis))
     val_grid = [grid[ci] for ci in val_cis]

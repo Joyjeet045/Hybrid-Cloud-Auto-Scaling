@@ -28,11 +28,6 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    # Sweep BOTH propagation hyperparameters: weight and hops. weight=0 is the
-    # disabled reference (hops is irrelevant when weight==0, so test it once).
-    # hops=1 gets the full fine weight grid; hops=2 (more aggressive multi-hop
-    # boost) only needs the small-weight region, since large weights are already
-    # catastrophic at hops=1 and hops=2 can only perturb selection more.
     hop_weights = {1: [w for w in PROP_WEIGHTS if w > 0.0],
                    2: [0.01, 0.02, 0.05, 0.1]}
     grid = [{"criticality": dict(CRIT), "propagation": {"weight": 0.0, "hops": 1}}]
@@ -74,7 +69,6 @@ def main():
         label = "disabled" if w == 0.0 else f"w={w:<5} hops={h}"
         print(f"  prop {label:<16} {mean_mrt:8.3f} ms  (dMRT {delta:+8.3f}){flag}{tag}")
 
-    # Also report: does propagation help on ANY single scenario at any (w, hops)?
     per_scen_help = {}
     base_per = raw[0]
     for ci, (w, h) in enumerate(combos):
@@ -103,7 +97,6 @@ def main():
     else:
         print("\nPer-scenario: propagation did not help on ANY single scenario.")
 
-    # Persist for reproducibility / commit artifact.
     out = {
         "criticality_fixed": CRIT,
         "reference_mean_mrt": base_mean,

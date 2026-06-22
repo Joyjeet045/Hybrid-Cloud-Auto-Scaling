@@ -82,14 +82,12 @@ class NFGDiagScaleController:
         self.budget_safety = float(ctrl.get("budget_safety", 0.97))
         self.max_res = int(ctrl.get("max_res", 4))
 
-        # Rec 3 (criticality-aware selection). crit_weight == 0 => legacy score.
         crit = config.get("criticality", {})
         self.crit_weight = float(crit.get("weight", 0.0))
         self.crit_alpha = float(crit.get("alpha", 0.4))
         self.crit_beta = float(crit.get("beta", 0.4))
         self.crit_gamma = float(crit.get("gamma", 0.2))
 
-        # Rec 4 (root-cause dependency propagation). prop_weight == 0 => no change.
         prop = config.get("propagation", {})
         self.prop_weight = float(prop.get("weight", 0.0))
         self.prop_hops = int(prop.get("hops", 1))
@@ -223,6 +221,8 @@ class NFGDiagScaleController:
         if best_type is None:
             return None
 
+        best_type = self._select_bottleneck(state, feats, best_type)
+
         if self.prop_weight > 0.0:
             best_type = self._propagate_and_select(state, feats)
 
@@ -268,6 +268,15 @@ class NFGDiagScaleController:
         if delta_total > 0:
             return self._scale_up(f["replicas"], delta_total, cur_c, budget_room, hours_remaining)
         return self._scale_down(f["replicas"], delta_total)
+
+    def _select_bottleneck(self, state, feats, default_type):
+        """Bottleneck-selection extension point.
+
+        The baseline returns the analytic critical-path argmax unchanged. Pluggable
+        ablations (see the ``ablations`` package) override this to inject an
+        alternative selector without modifying the core control loop.
+        """
+        return default_type
 
     def _criticality_score(self, base_score, psi, rank_t, lat_risk, pressure):
         """Blend the legacy bottleneck score with a criticality priority (Rec 3).

@@ -55,4 +55,13 @@ _sanity_*.json
 _audit_*.py
 _smoke_*.py
 _ref_*.py
+_strip_*.py
 _star_setup.txt
+
+# ---- Ablation experiment caches / weights (regenerable, never published) ----
+# Distillation record caches and trained GCN weights for the ablation studies
+# under ablations/. They are rebuilt on demand by each ablation's trainer.
+ablations/**/_records_*.pkl
+ablations/**/gnn_weights.pt
+_gnn_records_*.pkl
+nfg_diagscale/decision/gnn_weights.pt

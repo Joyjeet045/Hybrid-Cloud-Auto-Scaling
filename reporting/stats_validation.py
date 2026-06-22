@@ -41,17 +41,12 @@ FIG_DIR = os.path.join(_HERE, "figures")
 TAB_DIR = os.path.join(_HERE, "tables")
 RESULTS = os.path.join(_REPO_ROOT, "star_comparison_results.json")
 
-# Demsar (2006) two-tailed Nemenyi critical values q_alpha at alpha = 0.05,
-# indexed by the number of compared methods k.
 _NEMENYI_Q05 = {
     2: 1.960, 3: 2.343, 4: 2.569, 5: 2.728, 6: 2.850,
     7: 2.949, 8: 3.031, 9: 3.102, 10: 3.164,
 }
 
 
-# --------------------------------------------------------------------------- #
-# data loading
-# --------------------------------------------------------------------------- #
 def load_mrt_matrix(path=RESULTS):
     """Return (scenarios, methods, mrt) with mrt[i, j] = MRT of method j on
     scenario i. ``methods`` lists the baselines first, NF-DiagScale last."""
@@ -60,7 +55,6 @@ def load_mrt_matrix(path=RESULTS):
     star = data["star_table"]
     nfg = data["nfg_diagscale"]
 
-    # only scenarios where baselines AND NF-DiagScale are present
     scenarios = [s for s in star if s in nfg]
     baselines = sorted({m for s in scenarios for m in star[s]})
     methods = baselines + ["NF-DiagScale"]
@@ -68,7 +62,7 @@ def load_mrt_matrix(path=RESULTS):
     mrt = np.empty((len(scenarios), len(methods)), dtype=float)
     for i, s in enumerate(scenarios):
         for j, m in enumerate(baselines):
-            mrt[i, j] = float(star[s][m][0])      # entry = [MRT, Vio]
+            mrt[i, j] = float(star[s][m][0])
         mrt[i, -1] = float(nfg[s]["MRT"])
     return scenarios, methods, mrt
 
@@ -112,9 +106,6 @@ def holm_bonferroni(pvals):
     return adj
 
 
-# --------------------------------------------------------------------------- #
-# output helpers
-# --------------------------------------------------------------------------- #
 def _write_table(name, headers, rows, title=None):
     os.makedirs(TAB_DIR, exist_ok=True)
     csv_path = os.path.join(TAB_DIR, name + ".csv")
@@ -141,9 +132,6 @@ def _save(fig, name):
     print(f"  [fig] {os.path.relpath(path, _REPO_ROOT)}")
 
 
-# --------------------------------------------------------------------------- #
-# figures
-# --------------------------------------------------------------------------- #
 def _cliques(ranks_sorted, cd):
     """Maximal groups of (sorted) methods whose rank span is below CD."""
     k = len(ranks_sorted)
@@ -185,7 +173,6 @@ def fig_cd_diagram(methods, ranks, cd, name="fig11_cd_diagram.png"):
     ax.text(0.5, axis_y + 0.135, "Mean rank  (1 = best / lowest MRT)",
             ha="center", va="bottom", fontsize=11, fontweight="bold")
 
-    # critical-difference ruler
     cd_x = xpos(lo + cd) - xpos(lo)
     bar_y = axis_y + 0.085
     ax.plot([0, cd_x], [bar_y, bar_y], color="black", lw=2.2)
@@ -194,7 +181,6 @@ def fig_cd_diagram(methods, ranks, cd, name="fig11_cd_diagram.png"):
     ax.text(cd_x / 2.0, bar_y + 0.02, f"CD = {cd:.2f}",
             ha="center", va="bottom", fontsize=10)
 
-    # method elbows + labels (best ranks on the left, worst on the right)
     half = (k + 1) // 2
     row_gap = 0.115
     for pos, (nm, r) in enumerate(zip(names, rsorted)):
@@ -213,7 +199,6 @@ def fig_cd_diagram(methods, ranks, cd, name="fig11_cd_diagram.png"):
             ax.text(1.05, level, f"{nm}  ({r:.2f})",
                     ha="left", va="center", fontsize=10)
 
-    # cliques: methods not significantly different (rank span < CD)
     clique_y = axis_y - 0.055
     for n, (a, b) in enumerate(_cliques(rsorted, cd)):
         yy = clique_y - 0.022 * n
@@ -266,9 +251,6 @@ def fig_effect_sizes(baselines, deltas, holm_p, name="fig12_effect_sizes.png"):
     _save(fig, name)
 
 
-# --------------------------------------------------------------------------- #
-# main
-# --------------------------------------------------------------------------- #
 def main():
     scenarios, methods, mrt = load_mrt_matrix()
     n_scen, k = len(scenarios), len(methods)
@@ -278,7 +260,6 @@ def main():
     if k not in _NEMENYI_Q05:
         raise SystemExit(f"No Nemenyi critical value tabulated for k={k} methods.")
 
-    # --- Friedman omnibus + ranks ---------------------------------------- #
     chi2, p_fried = stats.friedmanchisquare(*[mrt[:, j] for j in range(k)])
     ranks = mean_ranks(mrt)
     cd = _NEMENYI_Q05[k] * np.sqrt(k * (k + 1) / (6.0 * n_scen))
@@ -294,7 +275,6 @@ def main():
                f"(alpha=0.05)."),
     )
 
-    # --- Pairwise NF-DiagScale vs each baseline -------------------------- #
     wil_p, deltas = [], []
     for j in range(len(baselines)):
         res = stats.wilcoxon(nf, mrt[:, j], alternative="two-sided")
@@ -323,11 +303,9 @@ def main():
                "Cliff's d < 0 favours NF-DiagScale; p two-sided."),
     )
 
-    # --- figures --------------------------------------------------------- #
     fig_cd_diagram(methods, ranks, cd)
     fig_effect_sizes(baselines, deltas, holm)
 
-    # --- console summary ------------------------------------------------- #
     print("\n" + "=" * 72)
     print(f"Scenarios (all methods present): {n_scen}  ->  {', '.join(scenarios)}")
     print(f"Friedman: chi2={chi2:.3f}  p={p_fried:.3e}  (k={k}, N={n_scen})")
