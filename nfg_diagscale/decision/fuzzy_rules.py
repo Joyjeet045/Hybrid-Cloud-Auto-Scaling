@@ -38,6 +38,37 @@ LINGUISTIC_TERMS = {
     },
 }
 
+# Premise membership functions calibrated once, offline, by deterministic 1-D
+# k-means (quantile-initialised, no RNG) over the pooled ANFIS-input distribution
+# of three workload-diverse calibration scenarios (N-13, W-13, A-13; seed 0), then
+# frozen for deployment. Term names/ordering and the open-shoulder gaussian_mf
+# semantics are preserved -- only each term's centre/sigma moves to where the data
+# concentrates. Selected by ``anfis.calibrated_mf`` (default on in default.yaml);
+# the hand-tuned LINGUISTIC_TERMS above remain the calibration seed. See
+# reporting/extract_mf.py for the reproducible derivation.
+CALIBRATED_TERMS = {
+    "psi": {
+        "low":      (0.390087, 0.132861),
+        "moderate": (0.611522, 0.132861),
+        "high":     (1.717794, 0.663763),
+        "critical": (4.038797, 1.392602),
+    },
+    "omega": {
+        "tight":    (0.992831, 0.05),
+        "moderate": (0.996621, 0.05),
+        "ample":    (0.999820, 0.05),
+    },
+    "phi": {
+        "exhausted": (0.607336, 0.154236),
+        "available": (0.864397, 0.060019),
+        "abundant":  (0.964428, 0.060019),
+    },
+    "rho": {
+        "safe":     (0.0, 0.6),
+        "risky":    (1.0, 0.6),
+    },
+}
+
 
 class FuzzyRule:
     def __init__(self, rule_id, antecedents, mode, delta_c, delta_n, justification):

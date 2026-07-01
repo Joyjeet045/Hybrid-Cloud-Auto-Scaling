@@ -505,43 +505,49 @@ class cloud_simulator(object):
         """
         action: 0: remain; 1: +1 vcpu; 2: -1 vcpu; 3: +1 replica; 4: -1 replica
         """ 
-        selected_con = action[0]
-        scaling = action[1]
-        inverse_new_id_map = action[2]
-        selected_con = inverse_new_id_map[selected_con]
-
-        con = self.con_queues[selected_con]
-        scaling_num = scaling
-        action_list.append(scaling_num)
-        if scaling_num > 0:
-            max_vcpu_add = con.max_scal_vcpu
-            if max_vcpu_add >= scaling_num:
-                con.v_scaling(scaling_num, self.con_queues, self.map_con_type_id, self.vm_map_id_vcpu, self.PrenextTimeStep, self.app_instances)
-            else:
-                con.v_scaling(max_vcpu_add, self.con_queues, self.map_con_type_id, self.vm_map_id_vcpu, self.PrenextTimeStep, self.app_instances)
-                replica_con = con.h_scaling(0, scaling_num - max_vcpu_add, self.con_queues, self.con_queues_id, self.map_con_type_id, self.PrenextTimeStep, self.firstconWrfLeaveTime, self.app_instances)
+        ops = action[0]
+        inverse_new_id_map = action[1]
+        for op in ops:
+            kind = op[0]
+            sel = inverse_new_id_map.get(op[1], op[1])
+            if sel not in self.con_queues:
+                continue
+            con = self.con_queues[sel]
+            if kind == "v":
+                delta = int(op[2])
+                if delta > 0:
+                    delta = min(delta, int(con.max_scal_vcpu))
+                    if delta > 0:
+                        con.v_scaling(delta, self.con_queues, self.map_con_type_id, self.vm_map_id_vcpu, self.PrenextTimeStep, self.app_instances)
+                elif delta < 0:
+                    delta = max(delta, -(int(con.vcpu) - 1))
+                    if delta < 0:
+                        con.v_scaling(delta, self.con_queues, self.map_con_type_id, self.vm_map_id_vcpu, self.PrenextTimeStep, self.app_instances)
+            elif kind == "h":
+                replica_con = con.h_scaling(0, int(op[2]), self.con_queues, self.con_queues_id, self.map_con_type_id, self.PrenextTimeStep, self.firstconWrfLeaveTime, self.app_instances)
                 self.deploy_con_vm(replica_con)
+            elif kind == "d":
+                self._release_replica(sel, pre_timestape)
 
-        elif scaling_num < 0:
-            util = con.get_utilization(self.nextWrf)
-            if con.active == True and self.firstconWrfLeaveTime[selected_con] == math.inf and con.vcpu > -scaling_num:
-                num_add = scaling_num
-                rental, is_empty = con.v_scaling(num_add, self.con_queues, self.map_con_type_id, self.vm_map_id_vcpu, self.PrenextTimeStep, self.app_instances)
-            elif util == 0 and len(self.map_con_type_id[con.get_contype()]) > 1 and \
-                con.active == True and self.firstconWrfLeaveTime[selected_con] == math.inf:
-                num_add = -con.get_vcpu()
-                rental, is_empty = con.v_scaling(num_add, self.con_queues, self.map_con_type_id, self.vm_map_id_vcpu, self.PrenextTimeStep, self.app_instances)
-                self.con_queues_id.remove(selected_con)
-                del self.con_queues[selected_con]
-                del self.firstconWrfLeaveTime[selected_con]
-                if con.vm.container_list == []:
-                    self.vm_map_id_vcpu[con.vm.get_vmid()] = 0
-                    self.vm_queues[con.vm.get_vmid()].active = False
-                    self.vm_queues[con.vm.get_vmid()].update_vmRentEndTime(self.PrenextTimeStep)
-                    self.total_cost += self.vm_queues[con.vm.get_vmid()].get_step_rental(pre_timestape)
-                if is_empty:
-                    self.pm_queues[con.pm.get_pmid()].active = False
-                    self.pm_map_id_vcpu[con.pm.get_pmid()] = 0
+    def _release_replica(self, selected_con, pre_timestape):
+        con = self.con_queues[selected_con]
+        if not (con.active == True and self.firstconWrfLeaveTime[selected_con] == math.inf):
+            return
+        if len(self.map_con_type_id[con.get_contype()]) <= 1:
+            return
+        num_add = -con.get_vcpu()
+        rental, is_empty = con.v_scaling(num_add, self.con_queues, self.map_con_type_id, self.vm_map_id_vcpu, self.PrenextTimeStep, self.app_instances)
+        self.con_queues_id.remove(selected_con)
+        del self.con_queues[selected_con]
+        del self.firstconWrfLeaveTime[selected_con]
+        if con.vm.container_list == []:
+            self.vm_map_id_vcpu[con.vm.get_vmid()] = 0
+            self.vm_queues[con.vm.get_vmid()].active = False
+            self.vm_queues[con.vm.get_vmid()].update_vmRentEndTime(self.PrenextTimeStep)
+            self.total_cost += self.vm_queues[con.vm.get_vmid()].get_step_rental(pre_timestape)
+        if is_empty:
+            self.pm_queues[con.pm.get_pmid()].active = False
+            self.pm_map_id_vcpu[con.pm.get_pmid()] = 0
         
     def deploy_con_vm(self, container: Container):
         """

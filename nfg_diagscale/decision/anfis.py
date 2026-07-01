@@ -18,7 +18,7 @@ stable, deterministic adaptation.
 """
 import numpy as np
 from nfg_diagscale.decision.fuzzy_rules import (
-    build_rule_base, gaussian_mf, LINGUISTIC_TERMS,
+    build_rule_base, gaussian_mf, LINGUISTIC_TERMS, CALIBRATED_TERMS,
 )
 
 
@@ -46,8 +46,11 @@ class ANFISEngine:
 
         self.rules = build_rule_base()
 
+        self._mf_terms = (CALIBRATED_TERMS
+                          if acfg.get("calibrated_mf", False)
+                          else LINGUISTIC_TERMS)
         self.mf_params = {}
-        for var_name, terms in LINGUISTIC_TERMS.items():
+        for var_name, terms in self._mf_terms.items():
             self.mf_params[var_name] = {}
             for term_name, (center, sigma) in terms.items():
                 self.mf_params[var_name][term_name] = {

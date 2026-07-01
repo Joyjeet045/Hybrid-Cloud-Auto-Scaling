@@ -87,7 +87,11 @@ class NFGDiagScaleController:
         ctrl = config.get("controller", {})
         self.idle_pressure = float(ctrl.get("idle_pressure", 0.25))
         self.budget_safety = float(ctrl.get("budget_safety", 0.97))
+        self.budget_horizon_frac = float(ctrl.get("budget_horizon_frac", 1.0))
         self.max_res = int(ctrl.get("max_res", 4))
+        self.disable_budget_gate = bool(ctrl.get("disable_budget_gate", False))
+        self.cda_overflow = bool(ctrl.get("cda_overflow", False))
+        self.spawn_cores = int(ctrl.get("spawn_cores", 0))
 
         crit = config.get("criticality", {})
         self.crit_weight = float(crit.get("weight", 0.0))
@@ -257,7 +261,7 @@ class NFGDiagScaleController:
         rho = 1.0 if (psi >= 1.0 or f["lat_risk"] >= 0.8) else 0.0
 
         remaining_budget = self.budget_T - state.total_cost
-        existing_vm_future = state.num_vms * self.vm_price * hours_remaining
+        existing_vm_future = state.num_vms * self.vm_price * hours_remaining * self.budget_horizon_frac
         budget_room = max(0.0, remaining_budget * self.budget_safety - existing_vm_future)
 
         other_vcpu = base_total_vcpu - f["type_total_vcpu"]
@@ -279,15 +283,9 @@ class NFGDiagScaleController:
 
         new_cores = cur_c + decision["delta_c"]
         new_replicas = cur_h + decision["delta_n"]
-        target_total = new_replicas * new_cores
-        delta_total = int(round(target_total - cur_h * cur_c))
-        delta_total = int(np.clip(delta_total, -self.max_res, self.max_res))
-        if delta_total == 0:
-            return None
-
-        if delta_total > 0:
-            return self._scale_up(f["replicas"], delta_total, cur_c, budget_room, hours_remaining)
-        return self._scale_down(f["replicas"], delta_total)
+        c_bar = int(np.clip(round(new_cores), self.min_cores, self.max_cores))
+        n_bar = int(np.clip(round(new_replicas), self.min_replicas, self.max_replicas))
+        return self._actuate_cda(f["replicas"], c_bar, n_bar, budget_room, hours_remaining)
 
     def _select_bottleneck(self, state, feats, default_type):
         """Bottleneck-selection extension point.
@@ -416,35 +414,40 @@ class NFGDiagScaleController:
             return max(feats, key=lambda k: feats[k]["score"])
         return best_t
 
-    def _scale_up(self, replicas, delta_total, replica_vcpu, budget_room, hours_remaining):
-        """Apply a positive vCPU delta to the hottest replica (diagonal scaling).
-
-        The simulator fills the host VM's free vCPU first (vertical, no new cost)
-        and overflows the remainder into one new replica (horizontal). We cap the
-        overflow to one replica of ``replica_vcpu`` so a single action never rents
-        an oversized VM, and block the overflow entirely when the budget cannot
-        absorb a new VM for the rest of the horizon (keeps cost violation at 0).
-        """
-        target = max(replicas, key=lambda c: (c.aver_resptime, c.qlen))
-        headroom = int(target.max_scal_vcpu)
-        if delta_total > headroom:
-            overflow = min(delta_total - headroom, max(self.min_cores, int(replica_vcpu)))
+    def _actuate_cda(self, replicas, c_bar, n_bar, budget_room, hours_remaining):
+        ops = []
+        deficit = 0
+        for con in replicas:
+            cr = int(con.vcpu)
+            delta = c_bar - cr
+            if delta < 0:
+                delta = max(delta, self.min_cores - cr)
+                if delta != 0:
+                    ops.append(("v", con.con_id, int(delta)))
+            elif delta > 0:
+                headroom = int(getattr(con, "max_scal_vcpu", delta))
+                applied = min(delta, headroom)
+                if applied > 0:
+                    ops.append(("v", con.con_id, int(applied)))
+                deficit += delta - applied
+        n = len(replicas)
+        spawn_c = self.spawn_cores if self.spawn_cores > 0 else int(c_bar)
+        want_out = max(0, int(n_bar - n))
+        if self.cda_overflow and deficit > 0:
+            want_out = max(want_out, int(np.ceil(deficit / max(1, spawn_c))))
+        if want_out > 0:
             new_vm_future_cost = self.vm_price * hours_remaining
-            if budget_room < new_vm_future_cost:
-                delta_total = headroom
-            else:
-                delta_total = headroom + overflow
-        if delta_total <= 0:
+            room = budget_room
+            anchor = replicas[0].con_id
+            for _ in range(want_out):
+                if not self.disable_budget_gate and room < new_vm_future_cost:
+                    break
+                ops.append(("h", anchor, int(spawn_c)))
+                room -= new_vm_future_cost
+        elif n_bar < n:
+            cold = sorted(replicas, key=lambda c: (c.aver_resptime, c.qlen))
+            for con in cold[: int(n - n_bar)]:
+                ops.append(("d", con.con_id))
+        if not ops:
             return None
-        return (target.con_id, int(delta_total))
-
-    def _scale_down(self, replicas, delta_total):
-        """Apply a negative vCPU delta to the coldest replica (scale-in)."""
-        target = min(replicas, key=lambda c: (c.aver_resptime, c.qlen))
-        room_down = -(int(target.vcpu) - self.min_cores)
-        if len(replicas) > 1:
-            room_down = -int(target.vcpu)
-        delta_total = max(delta_total, room_down)
-        if delta_total >= 0:
-            return None
-        return (target.con_id, int(delta_total))
+        return ops

@@ -467,9 +467,10 @@ def fig_mrt_reduction():
                     ha="center", va="bottom", fontsize=9)
     ax.axhline(0, color="#333", lw=1.0)
     ax.set_ylabel("MRT reduction vs STAR (%)")
-    ax.set_ylim(0, max(red) * 1.16)
+    ax.set_ylim(min(0.0, min(red)) * 1.2, max(red) * 1.16)
+    n_better = sum(1 for v in red if v > 0)
     ax.set_title(f"NF-DiagScale mean response-time reduction vs STAR  "
-                 f"(mean {np.mean(red):.0f}%, every scenario improved)", loc="left")
+                 f"(mean {np.mean(red):.0f}%, {n_better} of {len(red)} improved)", loc="left")
     from matplotlib.patches import Patch
     ax.legend(handles=[Patch(color=cmap["N"], label="NASA"),
                        Patch(color=cmap["W"], label="Wikipedia"),

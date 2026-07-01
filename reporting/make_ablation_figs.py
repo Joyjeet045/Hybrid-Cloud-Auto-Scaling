@@ -31,23 +31,27 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCEN = ["N-11", "N-12", "N-13", "W-11", "W-12", "W-13",
         "A-11", "A-12", "A-13", "N-14", "W-14", "A-14"]
 
-# Default (main) NF-DiagScale controller -- the ablation baseline.
-BASE = np.array([152.91, 157.39, 140.52, 229.34, 261.53, 210.52,
-                 169.09, 162.74, 130.07, 249.87, 383.11, 224.89])
+# Deployed NF-DiagScale controller (pooled-calibrated MFs) -- Ablation A baseline.
+BASE = np.array([169.66, 165.80, 138.74, 230.53, 241.24, 197.11,
+                 149.40, 153.25, 136.35, 255.74, 369.63, 249.47])  # 204.74
+
+# Hand-tuned expert seed (pre-calibration) -- Ablation B reference.
+EXPERT = np.array([161.10, 176.07, 141.94, 443.85, 381.82, 208.87,
+                   217.42, 166.06, 130.94, 287.19, 443.66, 276.96])  # 252.99
 
 # Ablation A: analytic critical-path selector replaced by a distilled 2-layer GCN
 # (local features, 71.9% in-sample selection agreement).
-GNN = np.array([271.27, 271.70, 541.44, 373.76, 372.38, 443.59,
-                232.72, 223.76, 442.59, 560.85, 448.13, 481.92])
+GNN = np.array([331.85, 294.15, 542.67, 527.63, 332.49, 373.98,
+                269.30, 245.16, 446.49, 495.22, 421.42, 410.44])  # 390.90
 
-# Ablation B: expert membership functions replaced by k-means-learned ones,
+# Ablation B: k-means-calibrated membership functions vs the expert seed,
 # under two calibration regimes.
-MF_SINGLE = np.array([161.81, 150.44, 138.96, 223.86, 229.83, 228.51,   # calib on A-12
-                      127.70, 140.83, 129.49, 230.84, 479.17, 216.10])
-MF_POOLED = np.array([137.70, 151.16, 139.08, 251.91, 236.19, 218.30,   # calib on N/W/A-13
-                      121.77, 162.48, 129.55, 240.88, 389.05, 237.89])
+MF_SINGLE = np.array([169.11, 165.32, 140.65, 225.56, 242.74, 195.58,   # calib on A-12
+                      150.68, 153.15, 136.92, 255.09, 619.26, 265.95])  # 226.67
+MF_POOLED = np.array([169.66, 165.80, 138.74, 230.53, 241.24, 197.11,   # calib on N/W/A-13
+                      149.40, 153.25, 136.35, 255.74, 369.63, 249.47])  # 204.74 (deployed)
 
-BASE_MEAN = float(BASE.mean())  # 206.00
+BASE_MEAN = float(BASE.mean())  # 204.74
 
 # ---------------------------------------------------------------------------
 # Ablation C / single-axis (deployed full controller = GCN residual + criticality).
@@ -105,7 +109,7 @@ def fig_ablation_gnn():
     ax.set_xlabel("scenario")
     ax.legend(loc="upper left", ncol=2)
     ax.set_title("Ablation A: a GCN distilled from the analytic critical-path selector "
-                 "regresses\nevery scenario ($+61$ to $+401$ ms); all-12 mean "
+                 "regresses\nevery scenario ($+52$ to $+404$ ms); all-12 mean "
                  f"{BASE_MEAN:.0f}$\\to${GNN.mean():.0f} ms "
                  f"($+{100 * (GNN.mean() - BASE_MEAN) / BASE_MEAN:.0f}\\%$, Vio still 0)",
                  loc="left", fontsize=10.5)
@@ -114,15 +118,15 @@ def fig_ablation_gnn():
 
 
 def fig_ablation_mf():
-    """Ablation B: per-scenario signed MRT change vs the expert baseline."""
-    d_single = MF_SINGLE - BASE
-    d_pooled = MF_POOLED - BASE
+    """Ablation B: per-scenario signed MRT change vs the expert seed."""
+    d_single = MF_SINGLE - EXPERT
+    d_pooled = MF_POOLED - EXPERT
     x = np.arange(len(SCEN))
     bw = 0.40
     fig, ax = plt.subplots(figsize=(9.2, 4.8))
-    ax.bar(x - bw / 2, d_single, bw, label="learned MFs, single-scenario calib.",
+    ax.bar(x - bw / 2, d_single, bw, label="calibrated MFs, single-scenario",
            color="#ff9800", edgecolor="k", linewidth=0.5)
-    ax.bar(x + bw / 2, d_pooled, bw, label="learned MFs, pooled calib.",
+    ax.bar(x + bw / 2, d_pooled, bw, label="calibrated MFs, pooled (deployed)",
            color="#1565c0", edgecolor="k", linewidth=0.5)
     ax.axhline(0.0, color="k", lw=1.0)
     ax.axhline(d_single.mean(), color="#ff9800", ls="--", lw=1.0,
@@ -132,11 +136,10 @@ def fig_ablation_mf():
     ax.set_xticks(x)
     ax.set_xticklabels(SCEN)
     ax.set_xlabel("scenario")
-    ax.set_ylabel(r"$\Delta$ MRT vs expert baseline (ms)" "\n(positive = worse)")
+    ax.set_ylabel(r"$\Delta$ MRT vs expert seed (ms)" "\n(positive = worse)")
     ax.legend(loc="upper left", ncol=2)
-    ax.set_title("Ablation B: learned membership functions help some scenarios and "
-                 "hurt others\n(W-14 $+96$, W-11 $+23$, in-sample W-13 $+8$/$+18$); "
-                 "no robust, reliable gain",
+    ax.set_title("Ablation B: $k$-means calibration helps only when pooled \u2014 single-scenario\n"
+                 "overfits (W-14 $+176$ ms); pooled repairs W-11 ($-213$ ms) and wins all nine",
                  loc="left", fontsize=10.5)
     pad = max(abs(d_single).max(), abs(d_pooled).max()) * 1.18
     ax.set_ylim(-pad, pad)

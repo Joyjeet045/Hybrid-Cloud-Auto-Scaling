@@ -86,13 +86,8 @@ class HGraphScaleEnv(cloud_simulator):
         return state, reward, done, info
 
     def _build_action(self, decision):
-        """Translate ``(con_id, delta)`` into the HGraphScale action tuple."""
+        """Translate a CDA command batch into the HGraphScale batch action."""
         inverse_map = {cid: cid for cid in self.con_queues}
         if not decision:
-            any_id = next(iter(self.con_queues))
-            return (any_id, 0, inverse_map)
-        con_id, delta = decision
-        if con_id not in inverse_map:
-            any_id = next(iter(self.con_queues))
-            return (any_id, 0, inverse_map)
-        return (con_id, int(delta), inverse_map)
+            return ([], inverse_map)
+        return (list(decision), inverse_map)

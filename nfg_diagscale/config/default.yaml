@@ -19,6 +19,7 @@ anfis:
   deadzone_moderate: 0.40
   deadzone_near_capacity: 0.55
   deadzone_over_capacity: 0.15
+  calibrated_mf: true
 
 adaptive:
   enabled: true
@@ -30,19 +31,22 @@ adaptive:
   budget_pacing: true
   bound_dc: 6.0
   bound_dn: 5.0
+  corrective_weight: 0.35
 
 cloud:
   min_replicas: 1
   max_replicas: 15
   min_cores: 1
   max_cores: 16
-  pod_max_rps: 20
   budget: 200.0
 
 controller:
   idle_pressure: 0.25
   budget_safety: 0.97
   max_res: 4
+  cda_overflow: true
+  budget_horizon_frac: 0.6
+  spawn_cores: 1
 
 # Rec 3 (criticality-aware selection). Tuned via tune_hyperparams.py: weight=0.4
 # with the balanced (alpha=beta=0.4, gamma=0.2) preset gave the most robust MRT
@@ -51,7 +55,7 @@ controller:
 # Priority_i = CS_i * Risk_i with CS_i = alpha*C_i + beta*D_i + gamma*L_i
 # (C=load demand, D=DAG centrality, L=latency contribution).
 criticality:
-  weight: 0.4
+  weight: 0.0
   alpha: 0.4
   beta: 0.4
   gamma: 0.2
